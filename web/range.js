@@ -75,6 +75,7 @@ const pitchLog = [];
 let sensitivity = 18;
 let smoothing = 0.35;
 let lastShots = null;
+let centred = false;
 let packets = 0;
 let muzzleFlash = 0;
 
@@ -110,6 +111,14 @@ function aimPoint() {
 // --- round flow -----------------------------------------------------------
 
 function startRound() {
+  // The player is holding the gun in their aiming pose right now, so this is
+  // the most useful moment to define as centre.
+  recentre();
+  cursor.x = 0.5;
+  cursor.y = 0.5;
+  recoil.x = 0;
+  recoil.y = 0;
+
   game.state = "playing";
   game.endsAt = performance.now() + ROUND_SECONDS * 1000;
   game.remaining = ROUND_SECONDS;
@@ -246,6 +255,13 @@ function connect() {
     aim.roll = data.roll;
     aim.trigger = data.trigger;
     aim.connected = data.connected;
+
+    // Without this the crosshair sits wherever the gun happens to be resting,
+    // which is usually hard against a screen edge.
+    if (!centred) {
+      recentre();
+      centred = true;
+    }
 
     trackFlick(data.pitch);
 

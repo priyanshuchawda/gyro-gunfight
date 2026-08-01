@@ -102,6 +102,9 @@ smaller and shorter-lived as you go, and the magazine holds six.
 | Reload | Flick the barrel sharply down | <kbd>R</kbd> |
 | Re-centre aim | — | <kbd>C</kbd> or the sidebar button |
 
+Aim re-centres itself when the page connects and again when a round starts, so
+whatever angle the gun is resting at does not matter.
+
 Sensitivity and smoothing are live sliders — tune them mid-round.
 
 ### 4. Check stream health
@@ -121,13 +124,19 @@ python3 tools/aim_monitor.py --seconds 10
 | [`tools/gyro_survey.py`](tools/gyro_survey.py) | Measures real swing rates to pick the gyro range |
 | [`tools/test_range.js`](tools/test_range.js) | Headless tests for the game rules |
 | [`tools/check_web.js`](tools/check_web.js) | Static check that the page and script agree |
+| [`tools/visual_check.py`](tools/visual_check.py) | Drives the page in a real browser and screenshots it |
 | [`web/`](web) | Browser shooting range |
 
 Run the host-side tests with:
 
 ```bash
-node tools/check_web.js && node tools/test_range.js
+node tools/check_web.js && node tools/test_range.js   # rules, no browser
+python3 tools/visual_check.py                         # real browser, needs the bridge
 ```
+
+The first two are fast and need nothing running. The visual check renders the
+page in Chromium, so it catches layout and drawing faults the rule tests are
+blind to.
 
 ---
 
