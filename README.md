@@ -16,7 +16,7 @@ Tilt/aim with the gyro/accel stick; more peripherals (IR, OLED, stepper, Nano) a
 | MPU IMU on I2C `0x68` (SDA=`D2`, SCL=`D1`) | Working — accel / gyro / temp |
 | Aim firmware (calibration + complementary filter) | Working — 100 Hz, ~0.2°/10 s drift |
 | Serial → browser bridge | Working |
-| Browser shooting range with live crosshair | Working |
+| Browser range: timed rounds, waves, ammo, reload gesture | Working |
 | Hardware trigger on `D5`, debounced | Working — 7 presses, 7 shots, no double-fires |
 | Magnetometer (AK8963) | Not present / not responding on this module |
 | Arduino Nano | On breadboard — needs Mini-USB to program |
@@ -89,10 +89,20 @@ python3 tools/aim_bridge.py --port /dev/ttyUSB0
 
 No hardware nearby? `python3 tools/aim_bridge.py --simulate`.
 
-Press **R** (or the button in the sidebar) to re-centre the crosshair,
-**Space**/click to fire, and tune sensitivity and smoothing live.
+### 3. Shoot
 
-### 3. Check stream health
+Pull the trigger to start a 60 second round. Targets arrive in waves that get
+smaller and shorter-lived as you go, and the magazine holds six.
+
+| Action | Gun | Keyboard |
+|--------|-----|----------|
+| Fire | Trigger on `D5` | <kbd>Space</kbd> or click |
+| Reload | Flick the barrel sharply down | <kbd>R</kbd> |
+| Re-centre aim | — | <kbd>C</kbd> or the sidebar button |
+
+Sensitivity and smoothing are live sliders — tune them mid-round.
+
+### 4. Check stream health
 
 ```bash
 python3 tools/aim_monitor.py --seconds 10
@@ -106,7 +116,15 @@ python3 tools/aim_monitor.py --seconds 10
 | [`firmware/mpu-reader`](firmware/mpu-reader) | Raw IMU dump, useful for bring-up and debugging |
 | [`tools/aim_bridge.py`](tools/aim_bridge.py) | Serial → HTTP/SSE bridge, serves the range |
 | [`tools/aim_monitor.py`](tools/aim_monitor.py) | Rate, noise, and drift report |
+| [`tools/test_range.js`](tools/test_range.js) | Headless tests for the game rules |
+| [`tools/check_web.js`](tools/check_web.js) | Static check that the page and script agree |
 | [`web/`](web) | Browser shooting range |
+
+Run the host-side tests with:
+
+```bash
+node tools/check_web.js && node tools/test_range.js
+```
 
 ---
 
