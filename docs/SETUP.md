@@ -60,7 +60,26 @@ esptool --port /dev/ttyUSB0 chip-id
 | Trigger never fires | Check the two button legs are **diagonal**, one to `D5`, one to `G` |
 | Range page blank | Bridge not running, or another process owns `/dev/ttyUSB0` |
 | Reload flick never fires | Flick faster — it needs ~200°/s down; magazine must not be full |
+| Aim jumps after a fast swing | Gyro clipped. Check `clips=` in the `# PEAK` lines and widen `GYRO_FS_DPS` |
 | Reload triggers while aiming | Lower the aim speed or raise `FLICK_DPS` in `web/range.js` |
+
+## Choosing the gyro range
+
+```bash
+python3 tools/gyro_survey.py     # speaks the instructions aloud
+```
+
+It walks through resting, aiming, flicking and an all-out swing, then reports
+which full-scale range fits. Set `GYRO_FS_DPS` in
+`firmware/aim-controller/src/main.cpp` to the smallest value with about 2x
+headroom and reflash.
+
+Speech needs `espeak-ng` and a sink with non-zero volume:
+
+```bash
+sudo dnf install -y espeak-ng
+pactl set-sink-volume @DEFAULT_SINK@ 55%
+```
 
 ## Host-side tests
 

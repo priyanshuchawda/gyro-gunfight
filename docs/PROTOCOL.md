@@ -33,6 +33,19 @@ Measured on hardware: **100 Hz**, noise ≈0.03°, yaw drift ≈0.2° over 10 s.
 | `c` | Re-run gyro bias calibration — hold the gun still |
 | `z` | Zero the yaw axis |
 
+## Diagnostics
+
+Once a second the controller also emits:
+
+```
+# PEAK gx=<dps> gy=<dps> gz=<dps> clips=<count>
+```
+
+`clips` counts samples that hit the gyro's full-scale rail, where the real
+rotation rate was larger than the sensor could report. It should stay at zero;
+anything else means motion is being lost. `tools/gyro_survey.py` uses these
+lines to pick the right range.
+
 ## Filtering notes
 
 - Gyro bias is averaged over 400 samples at boot; the gun must be still.
@@ -40,7 +53,13 @@ Measured on hardware: **100 Hz**, noise ≈0.03°, yaw drift ≈0.2° over 10 s.
   accelerometer long-term for pitch and roll.
 - Yaw has no absolute reference because this IMU has no working
   magnetometer, so it decays gently back toward centre instead of walking off.
-- A 0.06 dps deadzone stops sensor noise from creeping the aim.
+- The gyro runs at ±1000 dps full scale. Measured play peaks at 336 dps, so
+  ±250 (the power-on default) clips outright and ±500 leaves only 1.5x
+  headroom. The costs are lopsided: a wider range only coarsens counts a
+  little, while a clipped swing is unrecoverable in yaw with no compass.
+- The deadzone is fixed at 8 raw counts rather than a hardcoded dps figure, so
+  it tracks resolution automatically if the range changes. At ±1000 that works
+  out to 0.244 dps, well below any deliberate aim movement.
 - The trigger must hold a new level for 25 ms before it counts, which rejects
   the contact chatter that otherwise shows up as ~18 ms phantom presses.
 
