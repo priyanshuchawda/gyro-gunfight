@@ -59,6 +59,15 @@ esptool --port /dev/ttyUSB0 chip-id
 | One press fires twice | Raise `DEBOUNCE_MS` in the aim-controller firmware |
 | Trigger never fires | Check the two button legs are **diagonal**, one to `D5`, one to `G` |
 | Range page blank | Bridge not running, or another process owns `/dev/ttyUSB0` |
+| Reload flick never fires | Flick faster — it needs ~200°/s down; magazine must not be full |
+| Reload triggers while aiming | Lower the aim speed or raise `FLICK_DPS` in `web/range.js` |
+
+## Host-side tests
+
+```bash
+node tools/check_web.js   # page and script agree on ids and classes
+node tools/test_range.js  # round flow, ammo, reload, waves, timer
+```
 
 ## Serial monitor tip
 
