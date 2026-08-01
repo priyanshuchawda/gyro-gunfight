@@ -11,15 +11,41 @@ static const int PIN_TRIGGER = 14;  // D5
 static const uint8_t MPU_ADDR = 0x68;
 
 static const float DEG = 57.2957795f;
-static const float GYRO_LSB = 131.0f;    // +-250 dps
-static const float ACC_LSB = 16384.0f;   // +-2 g
+static const float ACC_LSB = 16384.0f;  // +-2 g
+
+// Full-scale gyro range in dps: 250, 500, 1000 or 2000. Measured play peaks at
+// 336 dps, so +-250 clips outright and +-500 leaves only 1.5x headroom. The
+// costs are lopsided: coarser counts only widen the deadzone slightly, while a
+// clipped swing is unrecoverable in yaw with no compass to correct it.
+#define GYRO_FS_DPS 1000
+
+#if GYRO_FS_DPS == 250
+static const uint8_t GYRO_FS_SEL = 0x00;
+static const float GYRO_LSB = 131.0f;
+#elif GYRO_FS_DPS == 500
+static const uint8_t GYRO_FS_SEL = 0x08;
+static const float GYRO_LSB = 65.5f;
+#elif GYRO_FS_DPS == 1000
+static const uint8_t GYRO_FS_SEL = 0x10;
+static const float GYRO_LSB = 32.8f;
+#elif GYRO_FS_DPS == 2000
+static const uint8_t GYRO_FS_SEL = 0x18;
+static const float GYRO_LSB = 16.4f;
+#else
+#error "GYRO_FS_DPS must be 250, 500, 1000 or 2000"
+#endif
+
+// A raw count this close to full scale means the rate was clipped, not measured.
+static const int16_t GYRO_CLIP_RAW = 32000;
 
 // Accel is trusted slowly so hand shake does not fight the gyro.
 static const float COMP_ALPHA = 0.98f;
 // Yaw has no absolute reference (no magnetometer), so bleed it back to
 // centre instead of letting residual bias walk the crosshair off screen.
 static const float YAW_DECAY = 0.995f;
-static const float GYRO_DEADZONE = 0.06f;  // dps
+// Held at a fixed number of raw counts so the deadzone tracks resolution
+// instead of silently vanishing when the full-scale range widens.
+static const float GYRO_DEADZONE = 8.0f / GYRO_LSB;
 
 static const uint16_t SAMPLE_HZ = 100;
 static const uint16_t SAMPLE_US = 1000000UL / SAMPLE_HZ;
@@ -36,6 +62,10 @@ static Vec3 gyro_bias = {0, 0, 0};
 static float pitch = 0, roll = 0, yaw = 0;
 static uint32_t last_us = 0;
 static bool calibrated = false;
+
+static uint32_t gyro_clips = 0;     // samples that hit the full-scale rail
+static Vec3 gyro_peak = {0, 0, 0};  // largest |rate| seen since the last report
+static uint32_t peak_report_ms = 0;
 
 static int trigger_state = 0;       // debounced level
 static int trigger_raw_last = 0;    // last raw sample, for restarting the timer
@@ -69,9 +99,18 @@ static bool readImu(Vec3 &acc, Vec3 &rot, float &temp_c) {
   acc.y = be16(raw[2], raw[3]) / ACC_LSB;
   acc.z = be16(raw[4], raw[5]) / ACC_LSB;
   temp_c = be16(raw[6], raw[7]) / 333.87f + 21.0f;
-  rot.x = be16(raw[8], raw[9]) / GYRO_LSB;
-  rot.y = be16(raw[10], raw[11]) / GYRO_LSB;
-  rot.z = be16(raw[12], raw[13]) / GYRO_LSB;
+
+  int16_t rx = be16(raw[8], raw[9]);
+  int16_t ry = be16(raw[10], raw[11]);
+  int16_t rz = be16(raw[12], raw[13]);
+  if (abs(rx) >= GYRO_CLIP_RAW || abs(ry) >= GYRO_CLIP_RAW ||
+      abs(rz) >= GYRO_CLIP_RAW) {
+    gyro_clips++;
+  }
+
+  rot.x = rx / GYRO_LSB;
+  rot.y = ry / GYRO_LSB;
+  rot.z = rz / GYRO_LSB;
   return true;
 }
 
@@ -81,10 +120,10 @@ static bool imuBegin() {
   writeReg(0x6B, 0x00);  // wake
   delay(50);
   writeReg(0x6B, 0x01);  // gyro X clock
-  writeReg(0x1A, 0x03);  // DLPF 44 Hz
-  writeReg(0x19, 0x00);  // 1 kHz sample
-  writeReg(0x1B, 0x00);  // gyro +-250 dps
-  writeReg(0x1C, 0x00);  // accel +-2 g
+  writeReg(0x1A, 0x03);         // DLPF 44 Hz
+  writeReg(0x19, 0x00);         // 1 kHz sample
+  writeReg(0x1B, GYRO_FS_SEL);  // gyro full scale
+  writeReg(0x1C, 0x00);         // accel +-2 g
   delay(50);
 
   Wire.beginTransmission(MPU_ADDR);
@@ -163,7 +202,24 @@ void setup() {
     Serial.println("# imu ok @0x68");
     calibrate();
   }
+  Serial.printf("# gyro range +-%d dps, %.1f LSB/dps, deadzone %.3f dps\n",
+                GYRO_FS_DPS, GYRO_LSB, GYRO_DEADZONE);
   Serial.println("# fields: AIM,ms,pitch,yaw,roll,trigger,shots");
+}
+
+// Peak rates say how much of the range play actually uses; clips say when the
+// sensor ran out of range and the motion was lost.
+static void reportPeaks(const Vec3 &rot) {
+  gyro_peak.x = max(gyro_peak.x, fabsf(rot.x));
+  gyro_peak.y = max(gyro_peak.y, fabsf(rot.y));
+  gyro_peak.z = max(gyro_peak.z, fabsf(rot.z));
+
+  uint32_t now = millis();
+  if (now - peak_report_ms < 1000) return;
+  peak_report_ms = now;
+  Serial.printf("# PEAK gx=%.1f gy=%.1f gz=%.1f dps clips=%lu\n", gyro_peak.x,
+                gyro_peak.y, gyro_peak.z, gyro_clips);
+  gyro_peak = {0, 0, 0};
 }
 
 void loop() {
@@ -191,6 +247,8 @@ void loop() {
     delay(50);
     return;
   }
+
+  reportPeaks(rot);
 
   float gx = deadzone(rot.x - gyro_bias.x);
   float gy = deadzone(rot.y - gyro_bias.y);

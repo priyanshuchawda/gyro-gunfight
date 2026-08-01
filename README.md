@@ -14,7 +14,7 @@ Tilt/aim with the gyro/accel stick; more peripherals (IR, OLED, stepper, Nano) a
 |-------|--------|
 | NodeMCU ESP8266EX over USB (CH340 `/dev/ttyUSB0`) | Working |
 | MPU IMU on I2C `0x68` (SDA=`D2`, SCL=`D1`) | Working — accel / gyro / temp |
-| Aim firmware (calibration + complementary filter) | Working — 100 Hz, ~0.2°/10 s drift |
+| Aim firmware (calibration + complementary filter) | Working — 100 Hz, ±1000 dps, no clipping |
 | Serial → browser bridge | Working |
 | Browser range: timed rounds, waves, ammo, reload gesture | Working |
 | Hardware trigger on `D5`, debounced | Working — 7 presses, 7 shots, no double-fires |
@@ -27,10 +27,12 @@ Measured stream from the controller:
 
 ```text
 # imu ok @0x68
-# CAL done bias=0.157,-5.554,-0.482 samples=400
+# CAL done bias=0.047,-5.422,-0.397 samples=400
+# gyro range +-1000 dps, 32.8 LSB/dps, deadzone 0.244 dps
 AIM,14225,65.87,-2.47,5.46,0,7
-samples=986 duration=9.9s rate=100.1 Hz
-pitch drift +0.01°   yaw drift +0.21°   noise_sd 0.025°
+
+at rest over 18.7 s:  pitch -0.26°   yaw 0.00°   roll +0.10°   0 clipped samples
+all-out swing:        272 dps peak of 1000 available (3.7x headroom)
 ```
 
 ---
@@ -116,6 +118,7 @@ python3 tools/aim_monitor.py --seconds 10
 | [`firmware/mpu-reader`](firmware/mpu-reader) | Raw IMU dump, useful for bring-up and debugging |
 | [`tools/aim_bridge.py`](tools/aim_bridge.py) | Serial → HTTP/SSE bridge, serves the range |
 | [`tools/aim_monitor.py`](tools/aim_monitor.py) | Rate, noise, and drift report |
+| [`tools/gyro_survey.py`](tools/gyro_survey.py) | Measures real swing rates to pick the gyro range |
 | [`tools/test_range.js`](tools/test_range.js) | Headless tests for the game rules |
 | [`tools/check_web.js`](tools/check_web.js) | Static check that the page and script agree |
 | [`web/`](web) | Browser shooting range |
