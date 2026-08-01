@@ -17,8 +17,8 @@ Tilt/aim with the gyro/accel stick; more peripherals (IR, OLED, stepper, Nano) a
 | Aim firmware (calibration + complementary filter) | Working — 100 Hz, ~0.2°/10 s drift |
 | Serial → browser bridge | Working |
 | Browser shooting range with live crosshair | Working |
+| Hardware trigger on `D5`, debounced | Working — 7 presses, 7 shots, no double-fires |
 | Magnetometer (AK8963) | Not present / not responding on this module |
-| Hardware trigger button on `D5` | Supported in firmware, not wired yet |
 | Arduino Nano | On breadboard — needs Mini-USB to program |
 | OLED, I2C LCD, IR sensor, A4988 | In kit — not wired yet |
 | Networked two-player match | Not started |
@@ -28,7 +28,7 @@ Measured stream from the controller:
 ```text
 # imu ok @0x68
 # CAL done bias=0.157,-5.554,-0.482 samples=400
-AIM,14225,65.87,-2.47,5.46,0
+AIM,14225,65.87,-2.47,5.46,0,7
 samples=986 duration=9.9s rate=100.1 Hz
 pitch drift +0.01°   yaw drift +0.21°   noise_sd 0.025°
 ```
@@ -68,7 +68,8 @@ See [docs/HARDWARE.md](docs/HARDWARE.md) for the full inventory, pin map, and wi
 | SCL | **D1** (GPIO5) |
 | SDA | **D2** (GPIO4) |
 
-Optional trigger button: one leg to **D5** (GPIO14), the other to **G**.
+Trigger button: two **diagonal** legs, one to **D5** (GPIO14), the other to
+**G**. No resistor — the firmware uses the internal pull-up.
 
 ### 1. Flash the aim controller
 

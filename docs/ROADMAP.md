@@ -15,10 +15,12 @@
 
 ## Phase 2 — Local game loop
 - [x] Hit / miss logic vs targets, score and accuracy
-- [ ] Wire the physical trigger button on `D5`
-- [ ] Recoil kick and target spawn waves
+- [x] Wire the physical trigger button on `D5`
+- [x] Debounce the trigger and count shots losslessly
+- [x] Recoil kick that moves the real aim point
+- [ ] Target spawn waves and a round timer
+- [ ] Ammo and reload gesture (flick the barrel down)
 - [ ] OLED HUD on the gun itself (ammo, HP, score)
-- [ ] Reload gesture (flick the barrel down)
 
 ## Phase 3 — Dual / arena
 - [ ] ESP8266 Wi‑Fi transport (ESP‑NOW or UDP)

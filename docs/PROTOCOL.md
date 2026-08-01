@@ -5,7 +5,7 @@ The controller streams plain ASCII lines over USB serial at **115200 baud**.
 ## Telemetry
 
 ```
-AIM,<device_ms>,<pitch>,<yaw>,<roll>,<trigger>
+AIM,<device_ms>,<pitch>,<yaw>,<roll>,<trigger>,<shots>
 ```
 
 | Field | Type | Meaning |
@@ -14,7 +14,12 @@ AIM,<device_ms>,<pitch>,<yaw>,<roll>,<trigger>
 | `pitch` | float° | Nose up/down, fused accel + gyro |
 | `yaw` | float° | Left/right, gyro-integrated and re-centred over time |
 | `roll` | float° | Barrel twist, fused accel + gyro |
-| `trigger` | 0/1 | `D5` (GPIO14) pulled to GND |
+| `trigger` | 0/1 | Debounced `D5` (GPIO14) level |
+| `shots` | int | Debounced presses since boot, monotonic |
+
+Count shots from the **delta of `shots`**, not from a `0 -> 1` edge on
+`trigger`. The counter survives a dropped serial line; an edge does not. A
+decrease means the board rebooted, so resynchronise rather than firing.
 
 Lines starting with `#` are human-readable logs (boot banner, calibration
 results, errors) and can be shown or ignored.
@@ -36,6 +41,8 @@ Measured on hardware: **100 Hz**, noise ≈0.03°, yaw drift ≈0.2° over 10 s.
 - Yaw has no absolute reference because this IMU has no working
   magnetometer, so it decays gently back toward centre instead of walking off.
 - A 0.06 dps deadzone stops sensor noise from creeping the aim.
+- The trigger must hold a new level for 25 ms before it counts, which rejects
+  the contact chatter that otherwise shows up as ~18 ms phantom presses.
 
 ## Bridge JSON
 
@@ -43,8 +50,9 @@ Measured on hardware: **100 Hz**, noise ≈0.03°, yaw drift ≈0.2° over 10 s.
 Server-Sent Events feed on `/stream`:
 
 ```json
-{"pitch": 12.4, "yaw": -3.1, "roll": 0.8, "trigger": 0,
+{"pitch": 12.4, "yaw": -3.1, "roll": 0.8, "trigger": 0, "shots": 7,
  "device_ms": 48120, "seq": 4812, "connected": true, "source": "/dev/ttyUSB0"}
 ```
 
-`seq` increments per update so clients can detect stalls.
+`seq` increments per update so clients can detect stalls. The bridge also
+accepts the older 6-field line and simply leaves `shots` at 0.
