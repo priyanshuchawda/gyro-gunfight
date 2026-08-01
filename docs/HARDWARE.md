@@ -49,6 +49,7 @@ Breadboard alone does **not** give upload access. Use Mini‑USB, USB‑TTL on R
 | 16×2 LCD + I2C backpack | I2C | Alternate HUD | No |
 | IR obstacle sensor | Digital (+ pot) | Trigger / hit detect | No |
 | A4988‑style driver (purple) | STEP/DIR + motor PSU | Recoil / turret later — needs **separate VMOT** | No |
+| Tactile button | `D5` → GND | Trigger, debounced 25 ms in firmware | **Yes** → ESP |
 | Slide switch | Digital | Power / mode | No |
 
 ### MPU pinout (blue breakout)
@@ -70,12 +71,20 @@ MPU SDA  →  NodeMCU D2
 Verified: I2C device at `0x68`, continuous accel/gyro stream @ 115200 baud,
 100 Hz filtered aim output with ~0.2° yaw drift over 10 s.
 
-Optional trigger (not yet soldered):
+Trigger button (wired and verified):
 
 ```
 Button leg A → NodeMCU D5
 Button leg B → NodeMCU G
 ```
+
+Use two **diagonally opposite** legs of a 4-leg tactile switch — the legs on
+the same side are permanently joined, so a diagonal pair is the one the press
+actually closes. Straddle the centre channel so the pairs land in separate
+rows. No resistor is needed; the firmware enables the internal pull-up, so the
+pin idles HIGH and reads LOW while pressed.
+
+Verified: 7 presses produced exactly 7 shots with no double-fires.
 
 ---
 

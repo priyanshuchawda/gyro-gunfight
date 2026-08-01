@@ -56,6 +56,8 @@ esptool --port /dev/ttyUSB0 chip-id
 | Nano not listed | Need Mini‑USB data cable; won’t appear via ESP USB |
 | Crosshair drifts | Press **R** to re-centre, or send `c` to recalibrate while still |
 | Crosshair pinned to an edge | Aim offset is stale — re-centre, or raise sensitivity |
+| One press fires twice | Raise `DEBOUNCE_MS` in the aim-controller firmware |
+| Trigger never fires | Check the two button legs are **diagonal**, one to `D5`, one to `G` |
 | Range page blank | Bridge not running, or another process owns `/dev/ttyUSB0` |
 
 ## Serial monitor tip

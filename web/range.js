@@ -26,13 +26,14 @@ const ui = {
 const aim = { pitch: 0, yaw: 0, roll: 0, trigger: 0, connected: false };
 const offset = { pitch: 0, yaw: 0 };
 const cursor = { x: 0.5, y: 0.5 };
+const recoil = { x: 0, y: 0 };
 
 const stats = { score: 0, hits: 0, shots: 0, streak: 0, best: 0 };
 const targets = [];
 
 let sensitivity = 18;
 let smoothing = 0.35;
-let lastTrigger = 0;
+let lastShots = null;
 let packets = 0;
 let muzzleFlash = 0;
 const shotMarks = [];
@@ -77,8 +78,18 @@ function connect() {
     aim.trigger = data.trigger;
     aim.connected = data.connected;
 
-    if (data.trigger && !lastTrigger) shoot();
-    lastTrigger = data.trigger;
+    // The device counts debounced presses, so a dropped packet cannot lose or
+    // duplicate a shot the way watching for a 0->1 edge would.
+    const shots = data.shots ?? 0;
+    if (lastShots === null) {
+      lastShots = shots;
+    } else if (shots > lastShots) {
+      const pending = Math.min(shots - lastShots, 5);
+      for (let i = 0; i < pending; i += 1) shoot();
+      lastShots = shots;
+    } else if (shots < lastShots) {
+      lastShots = shots; // device rebooted
+    }
 
     ui.dot.classList.toggle("live", data.connected);
     ui.link.textContent = data.connected ? data.source : "device offline";
@@ -97,12 +108,12 @@ function recentre() {
 }
 
 function shoot() {
-  const { w, h } = view();
-  const x = cursor.x * w;
-  const y = cursor.y * h;
+  const { x, y } = aimPoint();
 
   stats.shots += 1;
   muzzleFlash = 1;
+  recoil.y -= 0.055;
+  recoil.x += (Math.random() - 0.5) * 0.02;
 
   let hitIndex = -1;
   for (let i = targets.length - 1; i >= 0; i -= 1) {
@@ -155,10 +166,23 @@ function updateCursor() {
 
   cursor.x += (clamp01(targetX) - cursor.x) * k;
   cursor.y += (clamp01(targetY) - cursor.y) * k;
+
+  recoil.x *= 0.85;
+  recoil.y *= 0.85;
 }
 
 function clamp01(v) {
   return Math.min(1, Math.max(0, v));
+}
+
+// Recoil moves the real aim point, not just the drawing, so rapid fire costs
+// accuracy the same way it looks like it should.
+function aimPoint() {
+  const { w, h } = view();
+  return {
+    x: clamp01(cursor.x + recoil.x) * w,
+    y: clamp01(cursor.y + recoil.y) * h,
+  };
 }
 
 function drawBackdrop(w, h) {
@@ -239,9 +263,8 @@ function drawShotMarks(now) {
   }
 }
 
-function drawCrosshair(w, h) {
-  const x = cursor.x * w;
-  const y = cursor.y * h;
+function drawCrosshair() {
+  const { x, y } = aimPoint();
   const tilt = (aim.roll * Math.PI) / 180;
 
   ctx.save();
@@ -287,7 +310,7 @@ function frame() {
   drawBackdrop(w, h);
   drawTargets(now);
   drawShotMarks(now);
-  drawCrosshair(w, h);
+  drawCrosshair();
 
   ui.pitch.textContent = `${(aim.pitch - offset.pitch).toFixed(1)}°`;
   ui.yaw.textContent = `${(aim.yaw - offset.yaw).toFixed(1)}°`;

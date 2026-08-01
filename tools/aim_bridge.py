@@ -30,6 +30,7 @@ class AimState:
     yaw: float = 0.0
     roll: float = 0.0
     trigger: int = 0
+    shots: int = 0
     device_ms: int = 0
     seq: int = 0
     connected: bool = False
@@ -79,18 +80,22 @@ def read_serial(source: AimSource, port: str, baud: int, reset: bool) -> None:
                     if not raw.startswith("AIM,"):
                         continue
                     parts = raw.split(",")
-                    if len(parts) != 6:
+                    # 6 fields is the pre-debounce firmware, 7 adds the counter.
+                    if len(parts) not in (6, 7):
                         continue
                     try:
-                        source.set(
+                        fields = dict(
                             device_ms=int(parts[1]),
                             pitch=float(parts[2]),
                             yaw=float(parts[3]),
                             roll=float(parts[4]),
                             trigger=int(parts[5]),
                         )
+                        if len(parts) == 7:
+                            fields["shots"] = int(parts[6])
                     except ValueError:
                         continue
+                    source.set(**fields)
         except Exception as exc:  # keep the page alive across unplug/replug
             source.set(connected=False, source="disconnected")
             print(f"[bridge] serial error: {exc}; retrying in 2s")
@@ -109,6 +114,7 @@ def simulate(source: AimSource) -> None:
             yaw=18.0 * math.sin(t * 0.45),
             roll=5.0 * math.sin(t * 0.3),
             trigger=int(t % 3 < 0.1),
+            shots=int(t // 3),
         )
         time.sleep(0.01)
 

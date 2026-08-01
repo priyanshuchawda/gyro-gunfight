@@ -24,6 +24,10 @@ static const float GYRO_DEADZONE = 0.06f;  // dps
 static const uint16_t SAMPLE_HZ = 100;
 static const uint16_t SAMPLE_US = 1000000UL / SAMPLE_HZ;
 
+// Tactile switches chatter for a few ms on both make and break; a press has to
+// stay put this long before it counts as real.
+static const uint32_t DEBOUNCE_MS = 25;
+
 struct Vec3 {
   float x, y, z;
 };
@@ -32,6 +36,11 @@ static Vec3 gyro_bias = {0, 0, 0};
 static float pitch = 0, roll = 0, yaw = 0;
 static uint32_t last_us = 0;
 static bool calibrated = false;
+
+static int trigger_state = 0;       // debounced level
+static int trigger_raw_last = 0;    // last raw sample, for restarting the timer
+static uint32_t trigger_changed_ms = 0;
+static uint32_t shot_count = 0;     // monotonic, so hosts can count by delta
 
 static uint8_t writeReg(uint8_t reg, uint8_t val) {
   Wire.beginTransmission(MPU_ADDR);
@@ -120,6 +129,24 @@ static float deadzone(float v) {
   return fabsf(v) < GYRO_DEADZONE ? 0.0f : v;
 }
 
+// Runs every loop rather than every sample so a quick tap between IMU reads
+// still lands inside the debounce window.
+static void pollTrigger() {
+  int raw = (digitalRead(PIN_TRIGGER) == LOW) ? 1 : 0;
+  uint32_t now = millis();
+
+  if (raw != trigger_raw_last) {
+    trigger_raw_last = raw;
+    trigger_changed_ms = now;
+    return;
+  }
+
+  if (raw != trigger_state && (now - trigger_changed_ms) >= DEBOUNCE_MS) {
+    trigger_state = raw;
+    if (raw) shot_count++;
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   delay(400);
@@ -136,7 +163,7 @@ void setup() {
     Serial.println("# imu ok @0x68");
     calibrate();
   }
-  Serial.println("# fields: AIM,ms,pitch,yaw,roll,trigger");
+  Serial.println("# fields: AIM,ms,pitch,yaw,roll,trigger,shots");
 }
 
 void loop() {
@@ -149,6 +176,8 @@ void loop() {
       Serial.println("# yaw zeroed");
     }
   }
+
+  pollTrigger();
 
   uint32_t now = micros();
   if ((uint32_t)(now - last_us) < SAMPLE_US) return;
@@ -174,8 +203,6 @@ void loop() {
   pitch = COMP_ALPHA * (pitch + gy * dt) + (1.0f - COMP_ALPHA) * acc_pitch;
   yaw = (yaw + gz * dt) * YAW_DECAY;
 
-  int trigger = (digitalRead(PIN_TRIGGER) == LOW) ? 1 : 0;
-
-  Serial.printf("AIM,%lu,%.2f,%.2f,%.2f,%d\n", millis(), pitch, yaw, roll,
-                trigger);
+  Serial.printf("AIM,%lu,%.2f,%.2f,%.2f,%d,%lu\n", millis(), pitch, yaw, roll,
+                trigger_state, shot_count);
 }
