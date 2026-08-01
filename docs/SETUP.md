@@ -84,9 +84,19 @@ pactl set-sink-volume @DEFAULT_SINK@ 55%
 ## Host-side tests
 
 ```bash
-node tools/check_web.js   # page and script agree on ids and classes
-node tools/test_range.js  # round flow, ammo, reload, waves, timer
+node tools/check_web.js       # page and script agree on ids and classes
+node tools/test_range.js      # round flow, ammo, reload, waves, timer
+python3 tools/visual_check.py # real browser: renders, connects, plays
 ```
+
+The visual check needs the bridge running and Chromium installed:
+
+```bash
+pip install --user playwright && python3 -m playwright install chromium
+```
+
+It fails on any console error, on a canvas that never draws, and on a round
+that will not start, then saves a screenshot to `/tmp/range.png`.
 
 ## Serial monitor tip
 
