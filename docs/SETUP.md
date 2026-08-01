@@ -98,6 +98,29 @@ pip install --user playwright && python3 -m playwright install chromium
 It fails on any console error, on a canvas that never draws, and on a round
 that will not start, then saves a screenshot to `/tmp/range.png`.
 
+## Desktop screenshots on GNOME Wayland
+
+`grim` needs a wlroots compositor and GNOME is not one, so it fails with
+"compositor doesn't support the screen capture protocol". The old
+`org.gnome.Shell.Screenshot` D-Bus method is refused with `AccessDenied`.
+Neither is a bug — GNOME does not let arbitrary processes read the screen.
+
+Go through the XDG portal instead:
+
+```bash
+flatpak permission-set screenshot screenshot '' yes   # grant once
+python3 tools/screenshot.py --out /tmp/desktop.png
+```
+
+Revoke whenever you want:
+
+```bash
+flatpak permission-set screenshot screenshot '' no
+```
+
+Capturing the range page itself does not need any of this — `visual_check.py`
+renders the page in its own browser.
+
 ## Serial monitor tip
 
 ```bash
