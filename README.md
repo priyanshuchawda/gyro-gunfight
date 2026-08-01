@@ -14,17 +14,23 @@ Tilt/aim with the gyro/accel stick; more peripherals (IR, OLED, stepper, Nano) a
 |-------|--------|
 | NodeMCU ESP8266EX over USB (CH340 `/dev/ttyUSB0`) | Working |
 | MPU IMU on I2C `0x68` (SDA=`D2`, SCL=`D1`) | Working — accel / gyro / temp |
+| Aim firmware (calibration + complementary filter) | Working — 100 Hz, ~0.2°/10 s drift |
+| Serial → browser bridge | Working |
+| Browser shooting range with live crosshair | Working |
 | Magnetometer (AK8963) | Not present / not responding on this module |
+| Hardware trigger button on `D5` | Supported in firmware, not wired yet |
 | Arduino Nano | On breadboard — needs Mini-USB to program |
 | OLED, I2C LCD, IR sensor, A4988 | In kit — not wired yet |
-| Game loop / multiplayer | Not started |
+| Networked two-player match | Not started |
 
-Sample live reading after flash:
+Measured stream from the controller:
 
 ```text
-I2C scan: 0x68
-WHO_AM_I=0x75 => MPU-family (clone)
-A: -0.39  0.05  0.94 g | G: 0.1  -5.3  -0.3 dps | T: 31.1C | R/P: 3.2/22.5
+# imu ok @0x68
+# CAL done bias=0.157,-5.554,-0.482 samples=400
+AIM,14225,65.87,-2.47,5.46,0
+samples=986 duration=9.9s rate=100.1 Hz
+pitch drift +0.01°   yaw drift +0.21°   noise_sd 0.025°
 ```
 
 ---
@@ -46,12 +52,12 @@ See [docs/HARDWARE.md](docs/HARDWARE.md) for the full inventory, pin map, and wi
 
 ---
 
-## Quick start — read the IMU
+## Quick start — play the range
 
 ### Tools
 - [PlatformIO Core](https://platformio.org/) (`pio`)
-- or `arduino-cli` with `esp8266:esp8266` core
-- Serial: `picocom` / `minicom` @ **115200**
+- Python 3 with `pyserial`
+- Serial fallback: `picocom` / `minicom` @ **115200**
 
 ### Wire (NodeMCU ↔ MPU)
 
@@ -62,16 +68,44 @@ See [docs/HARDWARE.md](docs/HARDWARE.md) for the full inventory, pin map, and wi
 | SCL | **D1** (GPIO5) |
 | SDA | **D2** (GPIO4) |
 
-### Flash & monitor
+Optional trigger button: one leg to **D5** (GPIO14), the other to **G**.
+
+### 1. Flash the aim controller
 
 ```bash
-cd firmware/mpu-reader
+cd firmware/aim-controller
 pio run -t upload --upload-port /dev/ttyUSB0
-pio device monitor -b 115200 --port /dev/ttyUSB0
-# or: picocom -b 115200 /dev/ttyUSB0
 ```
 
-Firmware lives in [`firmware/mpu-reader`](firmware/mpu-reader).
+Hold the gun still for a second after reset — that is the gyro calibration.
+
+### 2. Run the bridge and open the range
+
+```bash
+python3 tools/aim_bridge.py --port /dev/ttyUSB0
+# then open http://127.0.0.1:8000/
+```
+
+No hardware nearby? `python3 tools/aim_bridge.py --simulate`.
+
+Press **R** (or the button in the sidebar) to re-centre the crosshair,
+**Space**/click to fire, and tune sensitivity and smoothing live.
+
+### 3. Check stream health
+
+```bash
+python3 tools/aim_monitor.py --seconds 10
+```
+
+### Layout
+
+| Path | What |
+|------|------|
+| [`firmware/aim-controller`](firmware/aim-controller) | Filtered pitch/yaw/roll + trigger over serial |
+| [`firmware/mpu-reader`](firmware/mpu-reader) | Raw IMU dump, useful for bring-up and debugging |
+| [`tools/aim_bridge.py`](tools/aim_bridge.py) | Serial → HTTP/SSE bridge, serves the range |
+| [`tools/aim_monitor.py`](tools/aim_monitor.py) | Rate, noise, and drift report |
+| [`web/`](web) | Browser shooting range |
 
 ---
 
@@ -94,6 +128,7 @@ Arduino Nano can stay as a co-processor later (motors, A4988, extra IO). Program
 |-----|----------|
 | [docs/HARDWARE.md](docs/HARDWARE.md) | Parts list, voltages, pinouts, wiring rules |
 | [docs/SETUP.md](docs/SETUP.md) | Host tools, flash, serial, troubleshooting |
+| [docs/PROTOCOL.md](docs/PROTOCOL.md) | Serial line format, commands, bridge JSON |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Game milestones |
 
 ---

@@ -6,17 +6,19 @@
 - [x] Stream accel / gyro / temp
 - [x] Document hardware + flash firmware
 
-## Phase 1 — Aim controller
-- [ ] Calibrate gyro bias at rest
-- [ ] Complementary / Madgwick filter → stable pitch/yaw
-- [ ] Map aim to screen / virtual crosshair
-- [ ] Deadzone + sensitivity curve
+## Phase 1 — Aim controller (done)
+- [x] Calibrate gyro bias at rest
+- [x] Complementary filter → stable pitch/roll, decayed yaw
+- [x] Map aim to screen / virtual crosshair
+- [x] Deadzone + adjustable sensitivity and smoothing
+- [x] Serial → browser bridge and range demo
 
 ## Phase 2 — Local game loop
-- [ ] Trigger input (button or IR)
-- [ ] Hit / miss logic vs targets
-- [ ] OLED or Serial HUD (ammo, HP, score)
-- [ ] Simple single‑player range mode
+- [x] Hit / miss logic vs targets, score and accuracy
+- [ ] Wire the physical trigger button on `D5`
+- [ ] Recoil kick and target spawn waves
+- [ ] OLED HUD on the gun itself (ammo, HP, score)
+- [ ] Reload gesture (flick the barrel down)
 
 ## Phase 3 — Dual / arena
 - [ ] ESP8266 Wi‑Fi transport (ESP‑NOW or UDP)

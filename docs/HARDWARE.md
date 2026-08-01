@@ -20,7 +20,8 @@ Useful pins for this project:
 |-------|------|------|
 | D1 | 5 | I2C SCL (MPU) |
 | D2 | 4 | I2C SDA (MPU) |
-| D0–D8 | various | future buttons / IR / HUD |
+| D5 | 14 | Trigger button to GND (`INPUT_PULLUP`, active low) |
+| D0, D3–D8 | various | free for IR / HUD / reload |
 | 3V | — | sensor power |
 | G | — | common ground |
 | VIN / VU | — | 5 V from USB (do not feed into 3.3 V‑only pins) |
@@ -66,7 +67,15 @@ MPU SCL  →  NodeMCU D1
 MPU SDA  →  NodeMCU D2
 ```
 
-Verified: I2C device at `0x68`, continuous accel/gyro stream @ 115200 baud.
+Verified: I2C device at `0x68`, continuous accel/gyro stream @ 115200 baud,
+100 Hz filtered aim output with ~0.2° yaw drift over 10 s.
+
+Optional trigger (not yet soldered):
+
+```
+Button leg A → NodeMCU D5
+Button leg B → NodeMCU G
+```
 
 ---
 
