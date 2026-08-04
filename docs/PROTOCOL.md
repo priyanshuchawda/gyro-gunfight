@@ -101,9 +101,51 @@ Behaviour pinned by `test_bias.cpp`: a 1.5 dps calibration error is recovered
 within about 6 s of holding steady, a swing or a hand-held pan does not move the
 estimate at all, and five minutes of thermal drift is tracked to within 0.2 dps.
 
-Accumulated yaw is a separate matter. Fixing the bias stops new error, but yaw
-already banked bleeds off at only 2%/s, so press `c` in the game to re-centre
-immediately.
+### Trusted and untrusted estimates
+
+Slow easing is right for a bias that is nearly correct and wrong for one that
+is nowhere near it. A calibration taken mid-swing measured **-27 dps** on Z;
+easing away from that at the slew limit would need three quarters of a minute
+of unbroken stillness, which is not a recovery. Measured: after ten full
+seconds of perfect stillness, easing had only reached -21.6.
+
+So calibration now judges itself. If the gyro wandered more than 3 dps while
+measuring, the result is refused and retried, up to four times. If none are
+clean the best attempt is kept but marked **untrusted**, and the first
+genuinely still window then replaces it outright rather than easing toward it.
+Yaw is zeroed at the same moment, because everything integrated under a bias
+that turned out to be wrong is not an aim offset worth keeping. Once replaced,
+the estimate is trusted and goes back to the slow path — a later pan can never
+snap it.
+
+### What stillness costs in practice
+
+Measured on the board, gyro wander over the 0.6 s window:
+
+| | wander |
+|---|---|
+| Resting on the desk | 0.24 – 0.34 dps |
+| Held in hand, aiming at the screen | 24 – 175 dps |
+
+The threshold is 2 dps, so the desk clears it with room to spare and a held gun
+does not come close. **Recovery means putting the gun down, not holding it
+steady** — a hand is roughly a hundred times too noisy, and no threshold that
+accepted a hand would still reject aiming.
+
+Accumulated yaw is a separate matter. On the snap path it is zeroed for you.
+Otherwise, fixing the bias only stops *new* error; yaw already banked bleeds off
+at 2%/s, so press `c` in the game to re-centre immediately.
+
+### Why connecting no longer reboots the board
+
+The bridge used to pulse DTR/RTS on connect, which reboots the ESP8266 and
+makes it recalibrate. That put the one measurement the whole aim depends on at
+the exact moment the player is picking the gun up — and yaw multiplies its
+error by fifty. It was the direct cause of "the aim runs off to the left every
+time I start the game".
+
+Reset is now opt-in behind `--reset`. A calibration taken once at power-on, with
+the gun on the desk, survives every launch after it.
 
 ## Diagnostics
 
@@ -121,26 +163,31 @@ lines to pick the right range.
 Every five seconds it reports the live bias estimate:
 
 ```
-# BIAS <gx>,<gy>,<gz> still=<0|1>
+# BIAS 0.046,-5.436,-0.364 still=1 trusted=1 wander=0.27
 ```
 
-`still=1` means the tracker currently believes the gun is stationary and is
-adjusting the estimate. Sitting on a desk it should read `1` with the numbers
-barely moving; on this board Z sits near `-0.39` and wanders about 0.04 dps,
-comfortably inside the 0.244° deadzone.
+`still=1` means the tracker believes the gun is stationary and is adjusting the
+estimate; `trusted=0` means it is running on a calibration it does not believe
+and is waiting for a still window to replace it. `wander` is the largest gyro
+spread across the window, and is what the stillness threshold is compared
+against. On a desk this board reads Z near `-0.39` with 0.04 dps of movement,
+comfortably inside the 0.244 dps deadzone.
 
-Calibration also now reports how much the gun moved while it was measuring:
+Calibration reports how far the gyro moved while it was measuring, and refuses
+a measurement it cannot believe:
 
 ```
-# CAL done bias=0.051,-5.394,-0.373 samples=400 wander=0.61
+# CAL attempt 1 saw 220.0 dps of movement, retrying - put the gun down
+# CAL UNTRUSTED after 4 attempts, best wander 200.5 dps
+# BIAS recovered 0.007,-5.799,-0.224 - yaw re-centred
 ```
 
-A large `wander` means the gun was in motion, and the line above it will say so
-outright. That used to fail silently, and the only evidence was a crosshair
-that would not stay put.
+The recovery line is emitted once, when an untrusted estimate is replaced.
 
-`tools/yaw_drift.py` reads the resting yaw back out as an implied bias, which
-is the quickest way to check the gun from outside the firmware.
+Two host-side tools read this from outside the firmware:
+`tools/yaw_drift.py` turns resting yaw back into an implied bias, and
+`tools/bias_recovery_check.py` narrates the whole failure and recovery aloud —
+you cannot read a terminal while waving a gun around with both hands.
 
 ## Filtering notes
 

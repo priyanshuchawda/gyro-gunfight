@@ -405,6 +405,11 @@ class Range3D:
                              position=(0.86, 0.46), scale=1.1, color=ink)
         self.hud_link = Text(parent=camera.ui, text="", origin=(-0.5, -0.5),
                              position=(-0.86, -0.46), scale=0.75, color=faint)
+        # The device can be streaming perfectly while its gyro bias is known to
+        # be wrong, which looks exactly like a gun that drifts for no reason.
+        self.hud_warn = Text(parent=camera.ui, text="", origin=(0, -0.5),
+                             position=(0, -0.36), scale=0.95,
+                             color=color.rgb32(214, 96, 40))
         self.banner = Text(parent=camera.ui, text="", origin=(0, 0), scale=2.2,
                            color=ink)
         self.banner_sub = Text(parent=camera.ui, text="", origin=(0, 0),
@@ -645,6 +650,9 @@ class Range3D:
             self.hud_timer.text = ""
         reloading = self.elapsed < self.reloading_until
         self.hud_ammo.text = "RELOADING" if reloading else "|" * self.ammo
+        self.hud_warn.text = ("" if state.bias_ok else
+                              "gyro bias not trusted - rest the gun on the "
+                              "desk for a second")
         link = state.source if state.connected else "no controller"
         self.hud_link.text = f"{link}   {self.rate} Hz   [space] fire  [c] centre  [esc] quit"
 
@@ -731,8 +739,10 @@ def main() -> int:
     parser.add_argument("--port", default="/dev/ttyUSB0")
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--simulate", action="store_true")
-    parser.add_argument("--no-reset", action="store_true",
-                        help="do not toggle DTR/RTS when opening the port")
+    parser.add_argument("--reset", action="store_true",
+                        help="reboot the board on connect, forcing it to "
+                             "recalibrate. Off by default: it would otherwise "
+                             "measure gyro bias exactly as you pick the gun up")
     parser.add_argument("--frames", type=int, default=0,
                         help="quit after N frames (for automated checks)")
     parser.add_argument("--shot", help="save a screenshot before quitting")
@@ -748,7 +758,7 @@ def main() -> int:
     else:
         worker = threading.Thread(
             target=read_serial,
-            args=(source, args.port, args.baud, not args.no_reset),
+            args=(source, args.port, args.baud, args.reset),
             daemon=True,
         )
     worker.start()

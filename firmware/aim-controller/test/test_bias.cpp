@@ -128,6 +128,44 @@ int main() {
     near("and recovers the true bias", tracker.bias().z, true_bias.z, 0.2f);
   }
 
+  // What actually came off the board: calibration ran while the gun was being
+  // waved through 439 dps and recorded a Z bias of -27.2 dps. Easing away from
+  // an error that size at the slew limit would take three quarters of a
+  // minute of perfect stillness, so an untrusted seed is replaced outright.
+  {
+    const Vec3 measured_mid_swing = {18.647f, -6.356f, -27.202f};
+    const Vec3 true_bias = {0.05f, -5.4f, -0.38f};
+
+    BiasTracker eased = makeTracker();
+    eased.seed(measured_mid_swing);  // trusted: the old behaviour
+    holdStill(eased, true_bias, 1000);  // 10 s of perfect stillness
+    if (fabsf(eased.bias().z - true_bias.z) > 5.0f) {
+      printf("  ok    %-50s %8.3f\n",
+             "easing cannot recover a mid-swing calibration", eased.bias().z);
+    } else {
+      printf("  FAIL  %-50s got %.3f, wanted still far from %.3f\n",
+             "easing cannot recover a mid-swing calibration", eased.bias().z,
+             true_bias.z);
+      failures++;
+    }
+
+    BiasTracker snapped = makeTracker();
+    snapped.seed(measured_mid_swing, /*trusted=*/false);
+    is_true("an untrusted seed starts untrusted", !snapped.trusted());
+    holdStill(snapped, true_bias, WINDOW + 2);
+    near("one still window replaces it outright", snapped.bias().z,
+         true_bias.z, 0.2f);
+    is_true("and the snap is reported once", snapped.consumeSnap());
+    is_true("only once", !snapped.consumeSnap());
+    is_true("after which it is trusted", snapped.trusted());
+
+    // Being trusted must mean the slow path again, or a later pan could
+    // replace the estimate wholesale instead of leaking into it slowly.
+    holdStill(snapped, {0, 0, true_bias.z + 10.0f}, WINDOW + 2);
+    below("a trusted estimate is never snapped again",
+          fabsf(snapped.bias().z - true_bias.z), 0.5f);
+  }
+
   // How long the player has to wait for that recovery. Anything beyond a few
   // seconds of holding steady would be felt as the gun being broken.
   {

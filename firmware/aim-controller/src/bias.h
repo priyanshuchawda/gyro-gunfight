@@ -46,8 +46,15 @@ class BiasTracker {
         gain_(gain),
         max_slew_(max_slew_dps_s) {}
 
-  void seed(const Vec3 &bias) {
+  // `trusted` says whether the seed is believable. An untrusted seed -- one
+  // measured while the gun was clearly moving -- is thrown away and replaced
+  // outright by the first still window, rather than eased toward over the
+  // best part of a minute. A calibration taken mid-swing can be tens of dps
+  // out, and easing away from that at the slew limit is not a recovery.
+  void seed(const Vec3 &bias, bool trusted = true) {
     bias_ = bias;
+    trusted_ = trusted;
+    snapped_ = false;
     filled_ = 0;
     head_ = 0;
     still_ = false;
@@ -74,11 +81,22 @@ class BiasTracker {
     // magnitude check sees a steady tilting pan as perfectly stationary and
     // quietly eats the player's own movement as bias.
     const float mx = mean(ax_), my = mean(ay_), mz = mean(az_);
-    still_ = spread(gx_) < rate_spread_ && spread(gy_) < rate_spread_ &&
-             spread(gz_) < rate_spread_ && spread(ax_) < acc_spread_ &&
+    wander_ = spread(gx_);
+    if (spread(gy_) > wander_) wander_ = spread(gy_);
+    if (spread(gz_) > wander_) wander_ = spread(gz_);
+    still_ = wander_ < rate_spread_ && spread(ax_) < acc_spread_ &&
              spread(ay_) < acc_spread_ && spread(az_) < acc_spread_ &&
              fabsf(sqrtf(mx * mx + my * my + mz * mz) - 1.0f) < 0.15f;
     if (!still_) return false;
+
+    // First good look at a stationary gun after a calibration that cannot be
+    // believed: take the reading as the truth and start trusting it.
+    if (!trusted_) {
+      bias_ = {mean(gx_), mean(gy_), mean(gz_)};
+      trusted_ = true;
+      snapped_ = true;
+      return true;
+    }
 
     // Recovering from a bad calibration and absorbing the player's own pan are
     // the same motion in reverse, so no gain can be quick at one and slow at
@@ -94,6 +112,21 @@ class BiasTracker {
 
   Vec3 bias() const { return bias_; }
   bool still() const { return still_; }
+  bool trusted() const { return trusted_; }
+
+  // Largest gyro spread across the window, in dps. Reported so the stillness
+  // threshold can be judged against what a hand actually achieves rather than
+  // against a guess.
+  float wander() const { return wander_; }
+
+  // True once after the estimate has been replaced wholesale. Whatever yaw was
+  // integrated under the discarded bias is meaningless, so the caller is
+  // expected to throw it away too.
+  bool consumeSnap() {
+    const bool s = snapped_;
+    snapped_ = false;
+    return s;
+  }
 
   Vec3 correct(const Vec3 &rot) const {
     return {rot.x - bias_.x, rot.y - bias_.y, rot.z - bias_.z};
@@ -136,5 +169,8 @@ class BiasTracker {
   uint16_t head_ = 0;
   uint16_t filled_ = 0;
   bool still_ = false;
+  bool trusted_ = true;
+  bool snapped_ = false;
+  float wander_ = 0;
   Vec3 bias_ = {0, 0, 0};
 };

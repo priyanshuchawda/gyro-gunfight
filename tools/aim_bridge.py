@@ -35,6 +35,10 @@ class AimState:
     seq: int = 0
     connected: bool = False
     source: str = "none"
+    # False while the device is running on a gyro bias it does not believe,
+    # which is a broken aim rather than a broken connection, and needs saying
+    # out loud in the game rather than only in the terminal.
+    bias_ok: bool = True
 
 
 class AimSource:
@@ -76,6 +80,12 @@ def read_serial(source: AimSource, port: str, baud: int, reset: bool) -> None:
                         continue
                     if raw.startswith("#"):
                         print(f"[device] {raw}")
+                        if "UNTRUSTED" in raw:
+                            source.set(bias_ok=False)
+                        elif "trusted=" in raw:
+                            source.set(bias_ok="trusted=1" in raw)
+                        elif "recovered" in raw:
+                            source.set(bias_ok=True)
                         continue
                     if not raw.startswith("AIM,"):
                         continue
@@ -173,9 +183,12 @@ def main() -> None:
     parser.add_argument("--http-port", type=int, default=8000)
     parser.add_argument("--simulate", action="store_true", help="fake aim input")
     parser.add_argument(
-        "--no-reset",
+        "--reset",
         action="store_true",
-        help="skip the DTR/RTS pulse that reboots the board on connect",
+        help="pulse DTR/RTS to reboot the board on connect, forcing it to "
+             "recalibrate. Off by default: rebooting makes the device measure "
+             "gyro bias at the exact moment the player is picking the gun up, "
+             "and yaw multiplies an error in that by fifty",
     )
     args = parser.parse_args()
 
@@ -185,7 +198,7 @@ def main() -> None:
     else:
         worker = threading.Thread(
             target=read_serial,
-            args=(source, args.port, args.baud, not args.no_reset),
+            args=(source, args.port, args.baud, args.reset),
             daemon=True,
         )
     worker.start()
