@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include <math.h>
 
+#include "attitude.h"
 #include "trigger.h"
 
 // NodeMCU I2C
@@ -56,12 +57,10 @@ static const uint16_t SAMPLE_US = 1000000UL / SAMPLE_HZ;
 // stay put this long before it counts as real.
 static const uint32_t DEBOUNCE_MS = 25;
 
-struct Vec3 {
-  float x, y, z;
-};
-
 static Vec3 gyro_bias = {0, 0, 0};
-static float pitch = 0, roll = 0, yaw = 0;
+
+// Same implementation the host tests drive; see test/test_attitude.cpp.
+static AttitudeFilter attitude(COMP_ALPHA, YAW_DECAY, GYRO_DEADZONE);
 static uint32_t last_us = 0;
 static bool calibrated = false;
 
@@ -153,19 +152,11 @@ static void calibrate(uint16_t samples = 400) {
   gyro_bias.y = sum.y / got;
   gyro_bias.z = sum.z / got;
 
-  if (readImu(acc, rot, t)) {
-    roll = atan2f(acc.y, acc.z) * DEG;
-    pitch = atan2f(-acc.x, sqrtf(acc.y * acc.y + acc.z * acc.z)) * DEG;
-  }
-  yaw = 0;
+  if (readImu(acc, rot, t)) attitude.seed(acc);
   calibrated = true;
   last_us = micros();
   Serial.printf("# CAL done bias=%.3f,%.3f,%.3f samples=%u\n",
                 gyro_bias.x, gyro_bias.y, gyro_bias.z, got);
-}
-
-static float deadzone(float v) {
-  return fabsf(v) < GYRO_DEADZONE ? 0.0f : v;
 }
 
 // Runs every loop rather than every sample so a quick tap between IMU reads
@@ -216,7 +207,7 @@ void loop() {
     char c = Serial.read();
     if (c == 'c' || c == 'C') calibrate();
     if (c == 'z' || c == 'Z') {
-      yaw = 0;
+      attitude.zeroYaw();
       Serial.println("# yaw zeroed");
     }
   }
@@ -238,17 +229,11 @@ void loop() {
 
   reportPeaks(rot);
 
-  float gx = deadzone(rot.x - gyro_bias.x);
-  float gy = deadzone(rot.y - gyro_bias.y);
-  float gz = deadzone(rot.z - gyro_bias.z);
+  const Vec3 rate = {rot.x - gyro_bias.x, rot.y - gyro_bias.y,
+                     rot.z - gyro_bias.z};
+  attitude.update(acc, rate, dt);
 
-  float acc_roll = atan2f(acc.y, acc.z) * DEG;
-  float acc_pitch = atan2f(-acc.x, sqrtf(acc.y * acc.y + acc.z * acc.z)) * DEG;
-
-  roll = COMP_ALPHA * (roll + gx * dt) + (1.0f - COMP_ALPHA) * acc_roll;
-  pitch = COMP_ALPHA * (pitch + gy * dt) + (1.0f - COMP_ALPHA) * acc_pitch;
-  yaw = (yaw + gz * dt) * YAW_DECAY;
-
-  Serial.printf("AIM,%lu,%.2f,%.2f,%.2f,%d,%lu\n", millis(), pitch, yaw, roll,
-                trigger.pressed() ? 1 : 0, (unsigned long)trigger.shots());
+  Serial.printf("AIM,%lu,%.2f,%.2f,%.2f,%d,%lu\n", millis(), attitude.pitch(),
+                attitude.yaw(), attitude.roll(), trigger.pressed() ? 1 : 0,
+                (unsigned long)trigger.shots());
 }

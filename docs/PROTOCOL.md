@@ -26,6 +26,25 @@ results, errors) and can be shown or ignored.
 
 Measured on hardware: **100 Hz**, noise ≈0.03°, yaw drift ≈0.2° over 10 s.
 
+### What yaw actually reports
+
+Pitch and roll are anchored to gravity, so they mean what they say. Yaw has no
+compass to anchor it, and the 0.995 per-sample decay that stops it drifting
+also stops it integrating honestly. Two consequences fall out of that, both
+pinned by `test_attitude.cpp`:
+
+- A half-second swing at 90 dps reports **39.7°, not the ideal 45°**. The decay
+  eats roughly an eighth of every swing at that length.
+- A *sustained* turn saturates at **1.99° per dps of turn rate**, so holding
+  90 dps stops at 179° and holding 30 dps stops at 59.7°, however far you
+  actually turn. Past about a second, yaw describes how fast you are turning
+  rather than how far you have turned.
+
+Neither is a bug to fix; without a magnetometer the choice is between a
+crosshair that wanders off screen and one that under-reports long turns. It
+matters for game design: aiming should be built around short flicks, which the
+filter reports faithfully, rather than long sweeps, which it compresses.
+
 ## Commands (host → device)
 
 | Byte | Effect |
