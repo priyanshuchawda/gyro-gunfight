@@ -52,9 +52,18 @@ is:
 
 The measured 0.005 dps residual never reaches the integrator at all: the
 0.244° deadzone removes it outright, so it is the deadzone rather than the
-decay that handles real drift. The decay only bounds what leaks past, and the
-last row is the price — this configuration leans on calibration being good, so
-hold the gun still at boot and press `c` if the aim starts wandering.
+decay that handles real drift. The decay only bounds what leaks past.
+
+The last row is the price, and it is steeper than it looks. **Yaw settles at
+roughly fifty times the residual bias**, so an error of 0.7 dps — a fraction of
+what picking the gun up during calibration produces — parks the crosshair off
+the side of a 70° screen. Re-centring does not save you: it moves the software
+offset while the bias underneath keeps pushing yaw back to the same place
+within a minute.
+
+Boot calibration alone was not a good enough foundation for a 50× multiplier,
+so the bias is now tracked continuously while you play; see
+[Runtime bias tracking](#runtime-bias-tracking) below.
 
 ## Commands (host → device)
 
@@ -62,6 +71,39 @@ hold the gun still at boot and press `c` if the aim starts wandering.
 |------|--------|
 | `c` | Re-run gyro bias calibration — hold the gun still |
 | `z` | Zero the yaw axis |
+
+## Runtime bias tracking
+
+The gyro bias is re-estimated while you play, so a bad boot calibration heals
+itself instead of ruining the session. Whenever the gun is demonstrably
+stationary, whatever the gyro reads at that moment *is* the bias, and the
+estimate is eased toward it. The same mechanism absorbs thermal drift, which no
+boot-time measurement can predict.
+
+Stillness is judged from how much the raw gyro **varies**, never from how large
+the bias-corrected rate is. That distinction is the whole design: a stationary
+gyro reads a constant, and if the current estimate is wrong then the corrected
+rate is large exactly when the correction is most needed, so a threshold on it
+would lock the tracker out of ever fixing itself.
+
+Two traps are worth knowing if you touch this:
+
+- Check the accelerometer **per axis**, not its magnitude. Rotating the gun
+  swings gravity from one axis to another while its length stays at exactly
+  1 g, so a magnitude check reads a steady tilting pan as perfectly stationary
+  and eats the player's own movement as bias.
+- A perfectly constant *yaw* pan is unobservable in principle — yawing a level
+  gun does not move gravity at all. Real hands are not that smooth, which the
+  gyro spread check catches, and a slew limit of 0.6 dps/s caps what the
+  undetectable case can cost before the gun is held still again.
+
+Behaviour pinned by `test_bias.cpp`: a 1.5 dps calibration error is recovered
+within about 6 s of holding steady, a swing or a hand-held pan does not move the
+estimate at all, and five minutes of thermal drift is tracked to within 0.2 dps.
+
+Accumulated yaw is a separate matter. Fixing the bias stops new error, but yaw
+already banked bleeds off at only 2%/s, so press `c` in the game to re-centre
+immediately.
 
 ## Diagnostics
 
@@ -75,6 +117,30 @@ Once a second the controller also emits:
 rotation rate was larger than the sensor could report. It should stay at zero;
 anything else means motion is being lost. `tools/gyro_survey.py` uses these
 lines to pick the right range.
+
+Every five seconds it reports the live bias estimate:
+
+```
+# BIAS <gx>,<gy>,<gz> still=<0|1>
+```
+
+`still=1` means the tracker currently believes the gun is stationary and is
+adjusting the estimate. Sitting on a desk it should read `1` with the numbers
+barely moving; on this board Z sits near `-0.39` and wanders about 0.04 dps,
+comfortably inside the 0.244° deadzone.
+
+Calibration also now reports how much the gun moved while it was measuring:
+
+```
+# CAL done bias=0.051,-5.394,-0.373 samples=400 wander=0.61
+```
+
+A large `wander` means the gun was in motion, and the line above it will say so
+outright. That used to fail silently, and the only evidence was a crosshair
+that would not stay put.
+
+`tools/yaw_drift.py` reads the resting yaw back out as an implied bias, which
+is the quickest way to check the gun from outside the firmware.
 
 ## Filtering notes
 

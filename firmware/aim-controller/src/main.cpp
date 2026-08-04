@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include "attitude.h"
+#include "bias.h"
 #include "trigger.h"
 
 // NodeMCU I2C
@@ -70,10 +71,23 @@ static const uint16_t SAMPLE_US = 1000000UL / SAMPLE_HZ;
 // stay put this long before it counts as real.
 static const uint32_t DEBOUNCE_MS = 25;
 
-static Vec3 gyro_bias = {0, 0, 0};
+// Runtime bias tracking. Boot calibration is a single measurement that assumes
+// the gun is motionless for its duration, and the decay above multiplies any
+// error in it by fifty, so being picked up during those samples is enough to
+// park the crosshair off the side of the screen -- and re-centring will not
+// help, because it moves the offset without touching the bias underneath.
+// These are the values the host tests characterise; see test/test_bias.cpp.
+static const uint16_t BIAS_WINDOW = 60;       // 0.6 s at 100 Hz
+static const float BIAS_RATE_SPREAD = 2.0f;   // dps of wander still called still
+static const float BIAS_ACC_SPREAD = 0.04f;   // g, per axis
+static const float BIAS_GAIN = 0.004f;        // of the error, per sample
+static const float BIAS_MAX_SLEW = 0.6f;      // dps per second, hard ceiling
 
 // Same implementation the host tests drive; see test/test_attitude.cpp.
 static AttitudeFilter attitude(COMP_ALPHA, YAW_DECAY, GYRO_DEADZONE);
+static BiasTracker bias_tracker(BIAS_WINDOW, BIAS_RATE_SPREAD, BIAS_ACC_SPREAD,
+                                BIAS_GAIN, BIAS_MAX_SLEW);
+static uint32_t bias_report_ms = 0;
 static uint32_t last_us = 0;
 static bool calibrated = false;
 
@@ -145,6 +159,7 @@ static bool imuBegin() {
 static void calibrate(uint16_t samples = 400) {
   Serial.println("# CAL start - hold the gun still");
   Vec3 sum = {0, 0, 0};
+  Vec3 lo = {1e9f, 1e9f, 1e9f}, hi = {-1e9f, -1e9f, -1e9f};
   Vec3 acc, rot;
   float t;
   uint16_t got = 0;
@@ -153,6 +168,9 @@ static void calibrate(uint16_t samples = 400) {
       sum.x += rot.x;
       sum.y += rot.y;
       sum.z += rot.z;
+      lo.x = min(lo.x, rot.x); hi.x = max(hi.x, rot.x);
+      lo.y = min(lo.y, rot.y); hi.y = max(hi.y, rot.y);
+      lo.z = min(lo.z, rot.z); hi.z = max(hi.z, rot.z);
       got++;
     }
     delay(3);
@@ -161,15 +179,26 @@ static void calibrate(uint16_t samples = 400) {
     Serial.println("# CAL failed - no IMU data");
     return;
   }
+  Vec3 gyro_bias;
   gyro_bias.x = sum.x / got;
   gyro_bias.y = sum.y / got;
   gyro_bias.z = sum.z / got;
 
+  // Say so when the gun clearly moved during the measurement. This used to
+  // fail silently, and the only evidence was a crosshair that would not stay
+  // put once the game started.
+  const float wander = max(max(hi.x - lo.x, hi.y - lo.y), hi.z - lo.z);
+  if (wander > BIAS_RATE_SPREAD * 3) {
+    Serial.printf("# CAL moved during calibration (%.1f dps of wander) - "
+                  "will self-correct once held still\n", wander);
+  }
+
+  bias_tracker.seed(gyro_bias);
   if (readImu(acc, rot, t)) attitude.seed(acc);
   calibrated = true;
   last_us = micros();
-  Serial.printf("# CAL done bias=%.3f,%.3f,%.3f samples=%u\n",
-                gyro_bias.x, gyro_bias.y, gyro_bias.z, got);
+  Serial.printf("# CAL done bias=%.3f,%.3f,%.3f samples=%u wander=%.2f\n",
+                gyro_bias.x, gyro_bias.y, gyro_bias.z, got, wander);
 }
 
 // Runs every loop rather than every sample so a quick tap between IMU reads
@@ -242,9 +271,18 @@ void loop() {
 
   reportPeaks(rot);
 
-  const Vec3 rate = {rot.x - gyro_bias.x, rot.y - gyro_bias.y,
-                     rot.z - gyro_bias.z};
-  attitude.update(acc, rate, dt);
+  // Fed the raw reading, not the corrected one: the tracker judges stillness
+  // from how much the gyro varies, and a wrong bias must not hide that.
+  bias_tracker.update(rot, acc, dt);
+  attitude.update(acc, bias_tracker.correct(rot), dt);
+
+  uint32_t now_ms = millis();
+  if (now_ms - bias_report_ms >= 5000) {
+    bias_report_ms = now_ms;
+    const Vec3 b = bias_tracker.bias();
+    Serial.printf("# BIAS %.3f,%.3f,%.3f still=%d\n", b.x, b.y, b.z,
+                  bias_tracker.still() ? 1 : 0);
+  }
 
   Serial.printf("AIM,%lu,%.2f,%.2f,%.2f,%d,%lu\n", millis(), attitude.pitch(),
                 attitude.yaw(), attitude.roll(), trigger.pressed() ? 1 : 0,

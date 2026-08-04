@@ -56,6 +56,7 @@ esptool --port /dev/ttyUSB0 chip-id
 | Nano not listed | Need Mini‑USB data cable; won’t appear via ESP USB |
 | Tools say the board is dead but it is streaming | Another sketch may be flashed — reflash `firmware/aim-controller` |
 | Crosshair drifts | Press **R** to re-centre, or send `c` to recalibrate while still |
+| Crosshair runs to one side, and re-centring only buys a minute | Bias captured while the gun was moving. Set it down for ~10 s and the tracker fixes it; re-centre to clear the yaw already banked. `# CAL` reports `wander` when this happened |
 | Crosshair pinned to an edge | Aim offset is stale — re-centre, or raise sensitivity |
 | One press fires twice | Raise `DEBOUNCE_MS` in the aim-controller firmware |
 | Trigger never fires | Check the two button legs are **diagonal**, one to `D5`, one to `G` |
@@ -95,6 +96,7 @@ tools/run_tests.sh --all  # plus the browser and the live controller
 |---|---|
 | `test_trigger.cpp` | Debounce, driven by bounce a finger cannot produce |
 | `test_attitude.cpp` | Complementary filter, gyro bias, shake, yaw decay |
+| `test_bias.cpp` | Runtime bias tracking: bad calibration, pans, thermal drift |
 | `check_web.js` | Page and script agree on ids and classes |
 | `test_range.js` | Round flow, ammo, reload, waves, timer |
 | `test_bridge.py` | Serial parsing, through a pseudo-terminal |

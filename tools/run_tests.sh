@@ -36,6 +36,7 @@ cxx() {
 
 run "trigger debounce"  cxx firmware/aim-controller/test/test_trigger.cpp /tmp/gg_trigger
 run "attitude filter"   cxx firmware/aim-controller/test/test_attitude.cpp /tmp/gg_attitude
+run "gyro bias tracker" cxx firmware/aim-controller/test/test_bias.cpp /tmp/gg_bias
 run "page and script"   node tools/check_web.js
 run "game rules"        node tools/test_range.js
 run "bridge parsing"    python3 tools/test_bridge.py
