@@ -30,30 +30,44 @@ def main() -> None:
         ser.reset_input_buffer()
 
         samples: list[tuple[int, float, float, float, int]] = []
+        seen = 0
+        rejected = 0
         deadline = time.time() + args.seconds
         while time.time() < deadline:
             line = ser.readline().decode("utf-8", errors="replace").strip()
             if line.startswith("#"):
                 print(line)
             elif line.startswith("AIM,"):
+                seen += 1
                 parts = line.split(",")
-                if len(parts) == 6:
-                    try:
-                        samples.append(
-                            (
-                                int(parts[1]),
-                                float(parts[2]),
-                                float(parts[3]),
-                                float(parts[4]),
-                                int(parts[5]),
-                            )
+                # 6 fields is the pre-debounce firmware, 7 adds the shot counter.
+                if len(parts) not in (6, 7):
+                    rejected += 1
+                    continue
+                try:
+                    samples.append(
+                        (
+                            int(parts[1]),
+                            float(parts[2]),
+                            float(parts[3]),
+                            float(parts[4]),
+                            int(parts[5]),
                         )
-                    except ValueError:
-                        pass
+                    )
+                except ValueError:
+                    rejected += 1
 
     if not samples:
-        print("no AIM samples - is the aim-controller firmware flashed?")
+        if seen:
+            # Blaming the firmware here would send you debugging the wrong layer.
+            print(f"{seen} AIM lines arrived but none parsed ({rejected} rejected).")
+            print("The board is streaming; this tool does not understand the format.")
+        else:
+            print("no AIM lines at all - is the aim-controller firmware flashed?")
         return
+
+    if rejected:
+        print(f"warning: {rejected} of {seen} AIM lines could not be parsed")
 
     span = (samples[-1][0] - samples[0][0]) / 1000.0
     print(f"\nsamples={len(samples)} duration={span:.1f}s rate={len(samples)/max(span, 1e-3):.1f} Hz")
