@@ -56,6 +56,34 @@ SMOOTHING = 0.45
 TARGET_COUNT = 5
 
 
+def view_scale() -> float:
+    """UI units to direction offset per unit of depth.
+
+    `camera.fov` is the **horizontal** field of view. Ursina hands it straight
+    to Panda's `set_fov`, whose single-argument form sets the horizontal angle
+    and derives the vertical one from the aspect ratio. Reading it as vertical
+    scales every ray by the aspect ratio -- 1.89x on this display -- so shots
+    landed correctly at dead centre and progressively further out from the
+    crosshair everywhere else.
+
+    Verified against the renderer rather than against its own inverse; see
+    `check_projection_against_render` in the self-test.
+    """
+    return 2.0 * math.tan(math.radians(camera.fov) / 2) / window.aspect_ratio
+
+
+def world_to_ui(point: Vec3) -> Vec2:
+    """Where the renderer draws a world point, in UI units.
+
+    Only valid for the fixed, unrotated camera this game uses.
+    """
+    rel = point - camera.world_position
+    if rel.z <= 0.001:
+        return Vec2(0, 0)
+    span = rel.z * view_scale()
+    return Vec2(rel.x / span, rel.y / span)
+
+
 SHELL = color.rgb32(62, 67, 78)
 SHELL_DARK = color.rgb32(33, 36, 43)
 ACCENT = color.rgb32(236, 92, 58)
@@ -496,12 +524,11 @@ class Range3D:
 
     def aim_ray(self) -> Vec3:
         """World-space direction the reticle is pointing."""
-        half = math.tan(math.radians(camera.fov) / 2)
-        # UI y of 0.5 is the top of the screen, which is `half` at unit depth.
+        scale = view_scale()
         return Vec3(
             camera.forward
-            + camera.right * (self.reticle_pos.x * 2 * half)
-            + camera.up * (self.reticle_pos.y * 2 * half)
+            + camera.right * (self.reticle_pos.x * scale)
+            + camera.up * (self.reticle_pos.y * scale)
         ).normalized()
 
     # -- shooting ---------------------------------------------------------
@@ -557,14 +584,12 @@ class Range3D:
 
     def popup(self, world_position: Vec3, points: int) -> None:
         """Float the score for a kill up from where the drone was."""
-        pos = camera.get_relative_point(scene, world_position)
-        if pos.z <= 0.1:
+        if world_position.z - camera.world_position.z <= 0.1:
             return
-        half = math.tan(math.radians(camera.fov) / 2)
+        ui = world_to_ui(Vec3(world_position))
         text = Text(parent=camera.ui, text=f"+{points}", origin=(0, 0), scale=0.9,
                     color=color.rgb32(232, 108, 58),
-                    position=(pos.x / (pos.z * 2 * half),
-                              pos.y / (pos.z * 2 * half), -0.05))
+                    position=(ui.x, ui.y, -0.05))
         self.popups.append([text, 0.9])
 
     # -- per frame --------------------------------------------------------
@@ -657,14 +682,92 @@ class Range3D:
         self.hud_link.text = f"{link}   {self.rate} Hz   [space] fire  [c] centre  [esc] quit"
 
 
-def run_selftest(game: "Range3D") -> None:
-    """Check that a shot lands where the reticle is drawn.
+def check_projection_against_render(report) -> None:
+    """Compare `world_to_ui` with where the renderer actually puts things.
 
-    The projection from reticle position to world ray is the easiest thing
-    here to get quietly wrong: an aspect ratio or a factor of two out and the
-    game still looks perfect while every shot misses by a consistent margin.
-    Placing a target at a known offset and firing is the only way to catch it.
+    This exists because the shooting checks below cannot catch a wrong
+    projection. They place a target along `aim_ray` and then fire along
+    `aim_ray`, so they agree with themselves at any scale factor -- including
+    the aspect-ratio error that shipped, where every shot away from the centre
+    landed well off the crosshair while all six checks passed.
+
+    The only non-circular reference is the rendered image. Markers go at known
+    world points, the frame is read back, and the pixels have to agree.
+    Positions are measured relative to a marker on the camera axis, which
+    cancels any constant offset between window and framebuffer coordinates.
     """
+    try:
+        import numpy as np
+        from PIL import Image
+        from panda3d.core import Filename
+    except ImportError as exc:
+        print(f"  skip  projection vs render ({exc})")
+        return
+
+    # Colours the scene and HUD do not contain, so the nearest pixel to each is
+    # unambiguously its marker.
+    marks = [
+        (Vec3(0, 0, 12), (255, 0, 255)),   # on the camera axis: the origin
+        (Vec3(4.5, 0, 12), (0, 255, 0)),
+        (Vec3(0, 3.0, 12), (0, 128, 255)),
+        (Vec3(-6.0, -1.6, 16), (255, 255, 0)),
+        (Vec3(7.0, 2.4, 20), (0, 255, 128)),
+    ]
+    spawned = []
+    for offset, rgb in marks:
+        spawned.append(Entity(
+            model="sphere", scale=0.45, shader=unlit_shader,
+            color=color.rgb32(*rgb),
+            position=camera.world_position + Vec3(offset.x, offset.y, offset.z)))
+
+    base = application.base
+    for _ in range(2):
+        base.graphicsEngine.renderFrame()
+    path = "/tmp/range3d_projection.png"
+    base.win.saveScreenshot(Filename.fromOsSpecific(path))
+
+    frame = np.asarray(Image.open(path).convert("RGB"), dtype=np.int16)
+    height, width, _ = frame.shape
+    aspect = window.aspect_ratio
+
+    def rendered_ui(rgb):
+        distance = np.abs(frame - np.array(rgb, dtype=np.int16)).sum(axis=2)
+        mask = distance < 60
+        if not mask.any():
+            return None
+        ys, xs = np.nonzero(mask)
+        # Centroid of the whole blob, so the answer is not one stray pixel.
+        return ((xs.mean() / width - 0.5) * aspect, 0.5 - ys.mean() / height)
+
+    origin = rendered_ui(marks[0][1])
+    if origin is None:
+        report("projection markers rendered", False)
+        for e in spawned:
+            destroy(e)
+        return
+
+    worst = 0.0
+    for offset, rgb in marks[1:]:
+        drawn = rendered_ui(rgb)
+        if drawn is None:
+            report(f"marker {rgb} was rendered", False)
+            continue
+        want = world_to_ui(camera.world_position + offset)
+        got = (drawn[0] - origin[0], drawn[1] - origin[1])
+        worst = max(worst, abs(got[0] - want.x), abs(got[1] - want.y))
+        print(f"        {str(rgb):<18} drawn ({got[0]:+.3f},{got[1]:+.3f})  "
+              f"predicted ({want.x:+.3f},{want.y:+.3f})")
+
+    # A factor-of-aspect error puts these 0.2 to 0.4 UI units apart, so this
+    # tolerance is far tighter than the bug it is here to catch.
+    report(f"projection matches the render (worst {worst:.3f} UI)", worst < 0.02)
+
+    for e in spawned:
+        destroy(e)
+
+
+def run_selftest(game: "Range3D") -> None:
+    """Check that a shot lands where the reticle is drawn."""
     failures = 0
 
     def check(name: str, got, want) -> None:
@@ -675,10 +778,32 @@ def run_selftest(game: "Range3D") -> None:
             print(f"  FAIL  {name:<44} got {got!r}, want {want!r}")
             failures += 1
 
+    def report(name: str, ok: bool) -> None:
+        nonlocal failures
+        if ok:
+            print(f"  ok    {name}")
+        else:
+            print(f"  FAIL  {name}")
+            failures += 1
+
     game.state = "playing"
     for t in list(game.targets):
         destroy(t)
     game.targets.clear()
+
+    # Anchor the projection to the renderer before anything below leans on it.
+    check_projection_against_render(report)
+
+    # The two directions must invert each other exactly, or the reticle, the
+    # score popups and the shots would each be using a different idea of where
+    # a screen position is.
+    worst = 0.0
+    for ux, uy in ((0, 0), (0.6, 0.35), (-0.6, -0.35), (0.9, -0.2)):
+        game.reticle_pos = Vec2(ux, uy)
+        back = world_to_ui(camera.world_position + game.aim_ray() * 14.0)
+        worst = max(worst, abs(back.x - ux), abs(back.y - uy))
+    report(f"reticle to ray and back agree (worst {worst:.4f} UI)",
+           worst < 0.001)
 
     def place(ui_x: float, ui_y: float, distance: float = 10.0) -> Entity:
         """Put a drone exactly where the reticle at (ui_x, ui_y) points."""
@@ -785,14 +910,12 @@ def main() -> int:
             # catches the game mid-fight instead of at the ready banner.
             if game.targets and counters["frames"] % 20 == 0:
                 target = game.targets[counters["frames"] // 20 % len(game.targets)]
-                pos = camera.get_relative_point(scene, target.world_position)
-                half = math.tan(math.radians(camera.fov) / 2)
+                ui = world_to_ui(Vec3(target.world_position))
                 shot = counters["frames"] // 20
                 # Every fourth shot is thrown wide on purpose, so the demo
                 # exercises the wall impact path and not just clean kills.
                 miss = 0.14 if shot % 4 == 3 else 0.0
-                game.reticle_pos = Vec2(pos.x / (pos.z * 2 * half) + miss,
-                                        pos.y / (pos.z * 2 * half) - miss)
+                game.reticle_pos = Vec2(ui.x + miss, ui.y - miss)
                 game.reticle.position = (game.reticle_pos.x, game.reticle_pos.y, 0)
                 game.ammo = MAG_SIZE
                 game.fire()
