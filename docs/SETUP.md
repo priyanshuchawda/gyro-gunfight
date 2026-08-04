@@ -84,23 +84,42 @@ pactl set-sink-volume @DEFAULT_SINK@ 55%
 
 ## Host-side tests
 
-```bash
-node tools/check_web.js       # page and script agree on ids and classes
-node tools/test_range.js      # round flow, ammo, reload, waves, timer
-python3 tools/visual_check.py # real browser: renders, connects, plays
+Everything that does not need hands on the gun runs from one script:
 
-g++ -std=c++11 -o /tmp/tt firmware/aim-controller/test/test_trigger.cpp && /tmp/tt
+```bash
+tools/run_tests.sh        # firmware, game and bridge
+tools/run_tests.sh --all  # plus the browser and the live controller
 ```
 
-The trigger test runs the firmware's own debounce header on the host, which is
-the only way to reach the cases that break it: a switch chattering forty times
-in three milliseconds, taps landing either side of the threshold, and a press
-spanning the `millis()` rollover. None of those can be staged by pressing the
-button.
+| Suite | What it covers |
+|---|---|
+| `test_trigger.cpp` | Debounce, driven by bounce a finger cannot produce |
+| `test_attitude.cpp` | Complementary filter, gyro bias, shake, yaw decay |
+| `check_web.js` | Page and script agree on ids and classes |
+| `test_range.js` | Round flow, ammo, reload, waves, timer |
+| `test_bridge.py` | Serial parsing, through a pseudo-terminal |
+| `visual_check.py` | Real browser renders, connects and plays |
 
-It pins one property worth knowing as a player: **a press shorter than 25 ms is
-discarded, not delayed.** Deliberate taps run 50 ms and longer, so this only
-bites if the switch itself is failing.
+The two C++ suites run the firmware's own headers on the host. That is the only
+way to reach the cases that actually break them — a switch chattering forty
+times in three milliseconds, a gyro bias integrating for a minute, a press
+spanning the `millis()` rollover — none of which can be staged by holding the
+gun and hoping.
+
+Both were checked by deliberately breaking the code to confirm the tests
+notice. That step earned its keep: the first version of the trigger tests
+passed with the debounce timer reset deleted, because shot counts cannot tell a
+window that restarts from one that never does.
+
+Two properties worth knowing as a player came out of this:
+
+- **A trigger press shorter than 25 ms is discarded, not delayed.** Deliberate
+  taps run 50 ms and up, so this only bites if the switch is failing.
+- **Yaw compresses long turns.** See the yaw section in `PROTOCOL.md`.
+
+`test_bridge.py` needs no hardware: `os.openpty()` gives it a real serial device
+to feed truncated lines, binary noise and the wrong field count. That last case
+is the bug that shipped on Aug 2 and went unnoticed until Aug 4.
 
 The visual check needs the bridge running and Chromium installed:
 
