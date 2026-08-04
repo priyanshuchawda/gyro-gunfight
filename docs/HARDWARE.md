@@ -78,6 +78,13 @@ Button leg A → NodeMCU D5
 Button leg B → NodeMCU G
 ```
 
+It has to be **D5, not D3**. D3 is GPIO0, which the ESP8266 samples at reset: hold
+a button on it while the board powers up and the chip enters flash mode instead
+of booting, so the gun looks dead. D5 has no such role. If the trigger reads
+`up` forever, check the wire is on D5 before suspecting the switch —
+`firmware/pin-finder` latches whichever pin a press actually reaches and will
+tell you in a few seconds.
+
 Use two **diagonally opposite** legs of a 4-leg tactile switch — the legs on
 the same side are permanently joined, so a diagonal pair is the one the press
 actually closes. Straddle the centre channel so the pairs land in separate

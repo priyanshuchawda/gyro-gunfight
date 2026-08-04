@@ -72,8 +72,30 @@ const shotMarks = [];
 const popups = [];
 const pitchLog = [];
 
-let sensitivity = 18;
-let smoothing = 0.35;
+// localStorage is missing entirely in the headless harness and throws outright
+// in a browser with storage blocked, so every access goes through here.
+const store = {
+  get(key, fallback) {
+    try {
+      const value = Number(localStorage.getItem(key));
+      return Number.isFinite(value) && value !== 0 ? value : fallback;
+    } catch {
+      return fallback;
+    }
+  },
+  set(key, value) {
+    try {
+      localStorage.setItem(key, String(value));
+    } catch {
+      // Storage blocked: the setting still applies, it just will not persist.
+    }
+  },
+};
+
+// Degrees of yaw needed to cross the full screen width. Bigger is calmer.
+// 18 was twitchy enough that a wrist twitch crossed the whole range.
+let sensitivity = store.get("gg.sens", 40);
+let smoothing = store.get("gg.smooth", 0.35);
 let lastShots = null;
 let centred = false;
 let packets = 0;
@@ -317,9 +339,13 @@ function updateCursor() {
   const dy = aim.pitch - offset.pitch;
   const dx = aim.yaw - offset.yaw;
 
-  // Half the sensitivity span maps to each edge of the screen.
+  // Half the sensitivity span maps to each edge of the screen. Vertical gets
+  // the same degrees per pixel rather than the same degrees per screen, so on
+  // a wide monitor a 10 degree swing covers the same distance either way
+  // instead of feeling faster up and down.
+  const { w, h } = view();
   const targetX = 0.5 - dx / sensitivity;
-  const targetY = 0.5 - dy / sensitivity;
+  const targetY = 0.5 - dy / (sensitivity * (h / w));
   const k = 1 - smoothing;
 
   cursor.x += (clamp01(targetX) - cursor.x) * k;
@@ -558,15 +584,25 @@ function frame() {
 
 // --- wiring ---------------------------------------------------------------
 
+// Both settings persist, because finding a feel you like takes a few rounds
+// and losing it on every reload makes that impossible.
 ui.sens.addEventListener("input", () => {
   sensitivity = Number(ui.sens.value);
   ui.sensval.textContent = sensitivity;
+  store.set("gg.sens", sensitivity);
 });
 
 ui.smooth.addEventListener("input", () => {
   smoothing = Number(ui.smooth.value) / 100;
   ui.smoothval.textContent = smoothing.toFixed(2);
+  store.set("gg.smooth", smoothing);
 });
+
+// Reflect the stored values in the controls on load.
+ui.sens.value = String(sensitivity);
+ui.sensval.textContent = sensitivity;
+ui.smooth.value = String(Math.round(smoothing * 100));
+ui.smoothval.textContent = smoothing.toFixed(2);
 
 ui.center.addEventListener("click", recentre);
 canvas.addEventListener("mousedown", fire);
