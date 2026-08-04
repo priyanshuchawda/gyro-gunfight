@@ -18,6 +18,51 @@ uv pip install --python .venv/bin/python ursina pyserial
 
 Space fires, `c` re-centres the aim, escape quits.
 
+## Lighting, and two traps in it
+
+The room is lit by one shadow-casting sun. Before that everything was flat
+colour and the drones read as stickers pasted on the wall; the shadow a drone
+throws is now the main cue for how far away it is.
+
+Two things in Ursina's lighting will waste an afternoon if you don't know them,
+and both look like the renderer is broken rather than like a setting:
+
+- `DirectionalLight(color=...)` does nothing. `Light.__init__` takes `color` as
+  a named argument and never passes it on, so the light stays full white. Full
+  white clips this room to a flat white page, because the shader adds a flat
+  albedo term to a diffuse term and near-white surfaces cross 1.0. Assign
+  `sun.color` *after* constructing the light.
+- `lit_with_shadows_shader` defaults `shadow_color` to `rgba(0, .5, 1, .25)`
+  and subtracts it from shadowed pixels, so out of the box every shadow in the
+  room is cyan. It is set to neutral grey here.
+
+`AmbientLight` is deliberately absent. That shader only ever reads light source
+zero, so a second light changes nothing at all; the job an ambient light would
+do is already done by the shader's flat albedo term, which is why unlit faces
+never go to black.
+
+The room itself — floor, back wall, side walls — is hidden from the shadow
+camera with `hide(0b0001)`. It still receives shadows, but a 16 m side wall lit
+from the left casts a slab across the entire back wall, and that reads as a
+rendering fault rather than as a shadow.
+
+## Hit feedback
+
+A light gun gives you nothing back: the muzzle never moves and there is no
+weapon on screen. All confirmation has to be built.
+
+A shot draws a tracer from below the eye, kicks the camera, and flashes a glow
+low on the screen. A hit bursts debris, floats the score up from where the
+drone was, flashes four ticks around the reticle, and tumbles the drone out of
+the sky instead of deleting it. A miss leaves a mark on whatever it hit, which
+is also the only way to tell *where* a miss went. Corner brackets appear on the
+reticle whenever a drone is under it, because at the back of the room a drone
+is only a few dozen pixels across and otherwise you cannot tell a near miss
+from a hit until the round is over.
+
+Effects are entities on one list that gets swept each frame, rather than
+`invoke(destroy)` per effect, so nothing leaks when a round ends early.
+
 ## Why light-gun rather than first person
 
 The camera does not move. The gun steers a reticle inside a fixed view, which
@@ -57,4 +102,12 @@ where you aimed, which is maddening to diagnose by playing.
 
 `--frames N --shot out.png` renders N frames and saves the window's own
 framebuffer, which is how the rendering gets checked without a person looking
-at it.
+at it. Add `--demo` to have it play itself — it walks the reticle onto drones
+and fires, missing every fourth shot on purpose so a screenshot exercises the
+wall-impact path and not just clean kills. Without it a screenshot only ever
+catches the ready banner.
+
+Read pixels out of that screenshot rather than trusting your eye on it. The
+whole room clipping to pure white and every shadow coming out cyan both looked,
+at a glance, like deliberate art direction; sampling four pixels is what
+identified them as the two shader defaults above.
