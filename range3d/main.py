@@ -26,8 +26,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 from ursina import (  # noqa: E402
     Cylinder,
-    Grid,
+    DirectionalLight,
     Entity,
+    Grid,
     Text,
     Ursina,
     Vec2,
@@ -36,12 +37,13 @@ from ursina import (  # noqa: E402
     camera,
     color,
     destroy,
-    held_keys,
     invoke,
     raycast,
+    scene,
     time as utime,
     window,
 )
+from ursina.shaders import lit_with_shadows_shader, unlit_shader  # noqa: E402
 
 from aim_bridge import AimSource, read_serial, simulate  # noqa: E402
 
@@ -54,6 +56,12 @@ SMOOTHING = 0.45
 TARGET_COUNT = 5
 
 
+SHELL = color.rgb32(62, 67, 78)
+SHELL_DARK = color.rgb32(33, 36, 43)
+ACCENT = color.rgb32(236, 92, 58)
+GLASS = color.rgb32(96, 158, 186)
+
+
 def make_drone(position: Vec3, scale: float) -> Entity:
     """A quadcopter built from primitives.
 
@@ -61,36 +69,175 @@ def make_drone(position: Vec3, scale: float) -> Entity:
     silhouette is all that reads, and it keeps the repo free of assets with
     licences attached.
     """
-    shell = color.rgb32(58, 62, 70)
-    dark = color.rgb32(34, 37, 43)
-
     drone = Entity(position=position, scale=scale, collider="box")
     # The collider is the whole silhouette; the visible parts hang off it as
     # children so a shot anywhere on the drone counts.
     drone.scale_y = scale * 0.8
 
-    Entity(parent=drone, model="cube", scale=(0.62, 0.42, 0.52), color=shell)
-    Entity(parent=drone, model="cube", scale=(0.34, 0.30, 0.62), color=dark,
-           position=(0, 0.1, -0.06))
+    body = Entity(parent=drone, model="cube", scale=(0.6, 0.34, 0.56),
+                  color=SHELL)
+    # A chamfer plate above and below turns a plain box into something that
+    # catches the light differently along its length.
+    Entity(parent=body, model="cube", scale=(0.86, 0.34, 0.82),
+           position=(0, 0.42, 0), color=SHELL_DARK)
+    Entity(parent=body, model="cube", scale=(0.7, 0.3, 1.05),
+           position=(0, -0.36, 0), color=SHELL_DARK)
+    # Camera gimbal slung underneath, which is what makes it read as a drone
+    # rather than a floating brick.
+    gimbal = Entity(parent=drone, model="sphere", scale=(0.24, 0.2, 0.24),
+                    position=(0, -0.22, -0.1), color=SHELL_DARK)
+    Entity(parent=gimbal, model="sphere", scale=0.62, position=(0, 0, -0.5),
+           color=GLASS)
     # Forward sensor, the one warm detail against all the grey.
-    Entity(parent=drone, model="sphere", scale=(0.17, 0.28, 0.17),
-           position=(0, 0.02, -0.34), color=color.rgb32(226, 92, 66))
+    Entity(parent=drone, model="sphere", scale=(0.15, 0.24, 0.15),
+           position=(0, 0.06, -0.32), color=ACCENT)
 
     rotors = []
     for dx, dz in ((1, 1), (1, -1), (-1, 1), (-1, -1)):
         angle = math.degrees(math.atan2(dz, dx))
-        Entity(parent=drone, model="cube", scale=(0.78, 0.13, 0.13),
-               position=(dx * 0.3, 0, dz * 0.3), rotation=(0, -angle, 0),
-               color=dark)
-        pod = Entity(parent=drone, model="cube", scale=(0.2, 0.22, 0.2),
-                     position=(dx * 0.62, 0.02, dz * 0.62), color=shell)
-        rotor = Entity(parent=pod, model=Cylinder(resolution=10, radius=0.5,
-                                                  height=0.06),
-                       scale=(2.9, 1, 2.9), position=(0, 0.6, 0),
-                       color=color.rgba32(40, 44, 52, 150))
+        Entity(parent=drone, model="cube", scale=(0.8, 0.1, 0.14),
+               position=(dx * 0.31, 0.02, dz * 0.31), rotation=(0, -angle, 0),
+               color=SHELL_DARK)
+        pod = Entity(parent=drone, model="cube", scale=(0.19, 0.26, 0.19),
+                     position=(dx * 0.64, 0.05, dz * 0.64), color=SHELL)
+        Entity(parent=pod, model="sphere", scale=(0.8, 0.5, 0.8),
+               position=(0, 0.7, 0), color=SHELL_DARK)
+        rotor = Entity(
+            parent=pod,
+            model=Cylinder(resolution=3, radius=0.5, height=0.04),
+            scale=(3.1, 1, 3.1), position=(0, 0.95, 0),
+            color=color.rgba32(30, 33, 40, 130),
+        )
         rotors.append(rotor)
     drone.rotors = rotors
+    drone.shadow = None
     return drone
+
+
+class Effects:
+    """Debris, tracers, impact marks and the muzzle flash.
+
+    Everything is a short-lived Entity on one list rather than a particle
+    system, because the counts here are tiny and a list that gets swept each
+    frame cannot leak entities the way ad-hoc invoke(destroy) calls can.
+    """
+
+    def __init__(self) -> None:
+        self.items: list[tuple[Entity, float, float, str, Vec3]] = []
+
+    def _add(self, entity: Entity, life: float, kind: str,
+             velocity: Vec3 = Vec3(0, 0, 0)) -> None:
+        self.items.append((entity, life, life, kind, velocity))
+
+    def burst(self, position: Vec3, scale: float = 1.0) -> None:
+        flash = Entity(model="sphere", position=position, scale=0.1 * scale,
+                       color=color.rgba32(255, 214, 150, 235),
+                       shader=unlit_shader)
+        self._add(flash, 0.16, "flash")
+
+        ring = Entity(model="sphere", position=position, scale=0.2 * scale,
+                      color=color.rgba32(255, 150, 80, 150), shader=unlit_shader)
+        self._add(ring, 0.34, "flash")
+
+        for _ in range(14):
+            direction = Vec3(random.uniform(-1, 1), random.uniform(-0.4, 1),
+                             random.uniform(-1, 1)).normalized()
+            shard = Entity(
+                model="cube", position=position,
+                scale=random.uniform(0.05, 0.13) * scale,
+                color=random.choice((SHELL, SHELL_DARK, ACCENT)),
+                rotation=Vec3(random.uniform(0, 360), random.uniform(0, 360), 0),
+            )
+            self._add(shard, random.uniform(0.5, 1.0), "debris",
+                      direction * random.uniform(3.5, 8.0))
+
+    def tracer(self, start: Vec3, end: Vec3) -> None:
+        delta = end - start
+        length = delta.length()
+        if length < 0.01:
+            return
+        beam = Entity(model="cube", position=start + delta * 0.5,
+                      color=color.rgba32(255, 208, 140, 170),
+                      shader=unlit_shader)
+        beam.look_at(end)
+        beam.scale = Vec3(0.016, 0.016, length)
+        # Not flagged "flash": the expansion those get would blow a beam this
+        # close to the eye up into a wedge across the whole screen.
+        self._add(beam, 0.05, "decal")
+
+    def wreck(self, drone: Entity, push: Vec3) -> None:
+        """Hand a killed drone over to be tumbled out of the sky.
+
+        It keeps its model and stops being a target, so it cannot be shot
+        twice while it falls.
+        """
+        drone.collider = None
+        self._add(drone, 1.7, "wreck", push)
+
+    def impact(self, position: Vec3, normal: Vec3) -> None:
+        # Faces back along the normal, not down it: an Ursina circle shows its
+        # -z side, so looking at the normal buries the visible face in the
+        # wall. Sized to read at the back of the room, roughly a tenth of a
+        # drone, which is small enough not to litter the chamber.
+        mark = Entity(model="circle", position=position + normal * 0.02,
+                      scale=0.45, color=color.rgba32(58, 66, 80, 190),
+                      shader=unlit_shader, double_sided=True)
+        mark.look_at(position - normal)
+        self._add(mark, 6.0, "decal")
+        ring = Entity(model="circle", position=position + normal * 0.03,
+                      scale=0.62, color=color.rgba32(120, 128, 142, 90),
+                      shader=unlit_shader, double_sided=True)
+        ring.look_at(position - normal)
+        self._add(ring, 2.5, "decal")
+        for _ in range(5):
+            direction = (normal + Vec3(random.uniform(-0.6, 0.6),
+                                       random.uniform(-0.2, 0.8),
+                                       random.uniform(-0.6, 0.6))).normalized()
+            spark = Entity(model="cube", position=position, scale=0.035,
+                           color=color.rgba32(255, 200, 130, 220),
+                           shader=unlit_shader)
+            self._add(spark, 0.3, "debris", direction * random.uniform(2, 4.5))
+
+    def update(self, dt: float) -> None:
+        alive = []
+        for entity, remaining, life, kind, velocity in self.items:
+            remaining -= dt
+            if remaining <= 0:
+                destroy(entity)
+                continue
+            fade = remaining / life
+            if kind == "debris":
+                entity.position += velocity * dt
+                velocity = Vec3(velocity.x, velocity.y - 14 * dt, velocity.z)
+                entity.rotation_x += 420 * dt
+                entity.rotation_y += 300 * dt
+            elif kind == "flash":
+                entity.scale *= 1 + 5.5 * dt
+            elif kind == "wreck":
+                entity.position += velocity * dt
+                velocity = Vec3(velocity.x, velocity.y - 18 * dt, velocity.z)
+                if entity.y < 0.3 and velocity.y < 0:
+                    entity.y = 0.3
+                    velocity = Vec3(velocity.x * 0.4, -velocity.y * 0.3,
+                                    velocity.z * 0.4)
+                entity.rotation_x += 250 * dt
+                entity.rotation_z += 170 * dt
+                # Shrunk away rather than faded: alpha on a parent does not
+                # reach its children, and a drone is a dozen child entities.
+                if remaining < 0.45:
+                    entity.scale *= max(0.0, 1 - dt * 7)
+
+            if kind == "decal":
+                entity.alpha = min(1.0, fade * 4)
+            elif kind != "wreck":
+                entity.alpha = fade
+            alive.append((entity, remaining, life, kind, velocity))
+        self.items = alive
+
+    def clear(self) -> None:
+        for entity, *_ in self.items:
+            destroy(entity)
+        self.items.clear()
 
 
 class Range3D:
@@ -107,6 +254,7 @@ class Range3D:
         self.reloading_until = 0.0
         self.elapsed = 0.0
         self.targets: list[Entity] = []
+        self.popups: list[list] = []
         self.rate_packets = 0
         self.rate = 0
 
@@ -115,67 +263,140 @@ class Range3D:
 
     # -- scene ------------------------------------------------------------
     def _build_world(self) -> None:
-        window.color = color.rgb32(228, 231, 235)
+        window.color = color.rgb32(214, 219, 226)
         # Eye height sits mid-way up the target band so the reticle rests at
         # the centre of the action instead of below it.
         camera.position = Vec3(0, 3.4, -9)
         camera.rotation = Vec3(0, 0, 0)
         camera.fov = 70
+        self.camera_home = Vec3(camera.position)
+        self.shake = 0.0
 
-        wall = color.rgb32(242, 243, 245)
+        # Everything built from here on is lit and casts shadows. Flat colour
+        # made the drones read as stickers; a single sun is what gives the
+        # boxes and rotor arms enough shading to look like objects in a room.
+        Entity.default_shader = lit_with_shadows_shader
+        # The stock shadow colour is `rgba(0, .5, 1, .25)`, and the shader
+        # subtracts it from shadowed pixels, so out of the box every shadow in
+        # the room comes out cyan. Neutral grey is what a shadow should be.
+        lit_with_shadows_shader.default_input["shadow_color"] = color.rgba(0, 0, 0, 0.38)
+
+        wall = color.rgb32(238, 240, 244)
         tile = color.rgba32(120, 130, 145, 70)
 
-        Entity(model="plane", scale=(60, 1, 60), position=(0, 0, 6),
-               color=color.rgb32(214, 217, 222))
-
-        # Back wall the drones fly against. The tile grid is what makes the
-        # room read as a test chamber and gives the eye a scale reference.
-        Entity(model="cube", scale=(34, 16, 0.4), position=(0, 8, 14), color=wall)
+        room = [
+            Entity(model="plane", scale=(44, 1, 44), position=(0, 0, 6),
+                   color=color.rgb32(216, 219, 225)),
+            # Back wall the drones fly against. The tile grid is what makes
+            # the room read as a test chamber and gives a scale reference.
+            Entity(model="cube", scale=(34, 16, 0.4), position=(0, 8, 14),
+                   color=wall, collider="box"),
+        ]
         Entity(model=Grid(17, 8), scale=(34, 16), position=(0, 8, 13.75),
-               color=tile)
+               color=tile, shader=unlit_shader)
         for x in (-17, 17):
-            Entity(model="cube", scale=(0.4, 16, 30), position=(x, 8, 2),
-                   color=color.rgb32(236, 238, 241))
+            room.append(Entity(model="cube", scale=(0.4, 16, 30),
+                               position=(x, 8, 2), collider="box",
+                               color=color.rgb32(236, 239, 243)))
+        # The room receives shadows but must not cast them. A 16 m side wall
+        # lit from the left throws a slab across the whole back wall, which
+        # looks like a rendering fault rather than a shadow. 0b0001 is the
+        # mask the shadow camera renders.
+        for surface in room:
+            surface.hide(0b0001)
 
-        # Floor bands, dark with one warm stripe, running across the room so
-        # depth is readable at a glance.
-        for z, shade in ((1.5, 150), (4.5, 172), (10.5, 172), (13.2, 150)):
-            Entity(model="cube", scale=(34, 0.02, 0.55), position=(0, 0.02, z),
-                   color=color.rgb32(shade, shade + 4, shade + 10))
-        Entity(model="cube", scale=(34, 0.02, 0.7), position=(0, 0.03, 7.5),
-               color=color.rgb32(226, 138, 62))
+        # A grid on the floor rather than the stripes that were here before.
+        # Stripes only mark the few depths they sit at; a grid converges, so
+        # the eye reads distance anywhere in the room.
+        Entity(model=Grid(22, 22), scale=(44, 44), rotation_x=90,
+               position=(0, 0.01, 6), color=tile, shader=unlit_shader)
+        Entity(model="cube", scale=(34, 0.02, 0.14), position=(0, 0.03, 7.5),
+               color=color.rgb32(226, 138, 62)).hide(0b0001)
 
         # Blocks on the floor, both as scenery and as something for stray
         # shots to stop against instead of vanishing into the distance.
         for x, z, h in ((-7.5, 8.5, 2.2), (7.5, 8.5, 2.2), (-2.4, 12.0, 1.5),
                         (3.6, 12.0, 1.8)):
             Entity(model="cube", scale=(1.5, h, 1.5), position=(x, h / 2, z),
-                   color=color.rgb32(250, 250, 252), collider="box")
+                   color=color.rgb32(248, 249, 251), collider="box")
 
+        # Sun from over the left shoulder, so drones throw a shadow onto the
+        # floor and the back wall. That shadow is the main depth cue for how
+        # far away a drone is.
+        self.sun = DirectionalLight(shadow_map_resolution=Vec2(2048, 2048))
+        # Assigned after construction on purpose: `Light.__init__` accepts a
+        # `color` argument and then never passes it on, so a colour handed to
+        # the constructor is dropped and the light stays full white. Full
+        # white clips this room, because the shader adds a flat albedo term
+        # and a diffuse term that together pass 1.0 on anything near-white.
+        self.sun.color = color.rgb32(203, 203, 203)
+        self.sun.position = Vec3(-8, 18, -4)
+        self.sun.look_at(Vec3(2, 0, 9))
+        # Fit the shadow map to the play volume instead of the whole scene:
+        # the 44 m floor would otherwise stretch the map until shadow edges
+        # dissolved into stair-steps.
+        bounds = Entity(model="cube", scale=(26, 12, 20), position=(0, 5, 7),
+                        visible=False)
+        self.sun.update_bounds(bounds)
+        # No AmbientLight: the shader only reads light source 0, so a second
+        # light would change nothing. Its job is done by the shader's flat
+        # albedo term, which never goes to black on unlit faces.
+
+        # A glow low on the screen where the gun would be, not a full-screen
+        # wash: covering the whole viewport tinted every pixel warm for the
+        # length of the flash, which looked like the render had gone wrong.
         self.muzzle_light = Entity(
-            model="quad", parent=camera.ui, scale=6,
+            model="circle", parent=camera.ui, scale=(1.1, 0.5),
+            position=(0.05, -0.62), shader=unlit_shader,
             color=color.rgba32(255, 190, 90, 0), z=1,
         )
+        self.effects = Effects()
 
     def _build_hud(self) -> None:
         # A ring plus four ticks, so the aim point stays readable against both
         # the dark floor and a bright target.
         self.reticle = Entity(parent=camera.ui)
         Entity(parent=self.reticle, model="circle", scale=0.030,
-               color=color.rgba32(255, 90, 70, 90))
+               shader=unlit_shader, color=color.rgba32(255, 90, 70, 90))
         Entity(parent=self.reticle, model="circle", scale=0.022,
-               color=color.rgba32(11, 14, 20, 210))
+               shader=unlit_shader, color=color.rgba32(11, 14, 20, 210))
         for dx, dy, sx, sy in ((0, 0.026, 0.002, 0.014), (0, -0.026, 0.002, 0.014),
                                (0.026, 0, 0.014, 0.002), (-0.026, 0, 0.014, 0.002)):
             Entity(parent=self.reticle, model="quad", position=(dx, dy, -0.01),
-                   scale=(sx, sy), color=color.rgba32(255, 120, 100, 230))
+                   scale=(sx, sy), shader=unlit_shader,
+                   color=color.rgba32(255, 120, 100, 230))
         Entity(parent=self.reticle, model="circle", scale=0.005, z=-0.02,
-               color=color.rgb32(255, 235, 220))
+               shader=unlit_shader, color=color.rgb32(255, 235, 220))
+
+        # Corner brackets that appear only while a drone is under the
+        # reticle. At this range a drone is a few dozen pixels wide, and
+        # without the confirmation you cannot tell a near miss from a hit
+        # until after you have spent the round.
+        self.lock = Entity(parent=self.reticle, enabled=False)
+        for sx in (-1, 1):
+            for sy in (-1, 1):
+                for w, h in ((0.016, 0.003), (0.003, 0.016)):
+                    Entity(parent=self.lock, model="quad", scale=(w, h),
+                           shader=unlit_shader, color=color.rgb32(240, 78, 40),
+                           position=(sx * (0.052 - w / 2), sy * (0.052 - h / 2),
+                                     -0.03))
+
+        # Four diagonal ticks that flash on a kill. In a light-gun game the
+        # muzzle never moves, so without this the only confirmation of a hit
+        # is a drone disappearing somewhere in peripheral vision.
+        self.hitmark = Entity(parent=self.reticle, enabled=False)
+        self.hitmark_scale = 1.0
+        for angle in (45, 135, 225, 315):
+            rad = math.radians(angle)
+            Entity(parent=self.hitmark, model="quad", rotation_z=angle + 90,
+                   position=(math.cos(rad) * 0.045, math.sin(rad) * 0.045, -0.03),
+                   scale=(0.004, 0.022), shader=unlit_shader,
+                   color=color.rgb32(255, 245, 235))
 
         # Dark on light: the room is white, so the readable HUD from the old
         # dark scene would have been invisible here.
         ink = color.rgb32(38, 44, 54)
-        faint = color.rgb32(120, 130, 145)
+        faint = color.rgb32(88, 96, 110)
         self.hud_score = Text(parent=camera.ui, text="", origin=(-0.5, 0.5),
                               position=(-0.86, 0.46), scale=1.1, color=ink)
         self.hud_timer = Text(parent=camera.ui, text="", origin=(0, 0.5),
@@ -199,6 +420,10 @@ class Range3D:
         for t in self.targets:
             destroy(t)
         self.targets.clear()
+        self.effects.clear()
+        for text, _ in self.popups:
+            destroy(text)
+        self.popups.clear()
         self.state = "playing"
         self.score = self.hits = self.shots = 0
         self.ammo = MAG_SIZE
@@ -222,7 +447,7 @@ class Range3D:
 
     def spawn_target(self) -> None:
         target = make_drone(
-            position=Vec3(random.uniform(-8.5, 8.5), random.uniform(1.8, 6.2),
+            position=Vec3(random.uniform(-8.5, 8.5), random.uniform(1.9, 7.4),
                           random.uniform(6, 13)),
             scale=random.uniform(0.85, 1.35),
         )
@@ -260,6 +485,10 @@ class Range3D:
         )
         self.reticle.position = (self.reticle_pos.x, self.reticle_pos.y, 0)
 
+        hit = raycast(camera.world_position, self.aim_ray(), distance=60,
+                      debug=False)
+        self.lock.enabled = bool(hit.hit and hit.entity in self.targets)
+
     def aim_ray(self) -> Vec3:
         """World-space direction the reticle is pointing."""
         half = math.tan(math.radians(camera.fov) / 2)
@@ -280,28 +509,65 @@ class Range3D:
 
         self.ammo -= 1
         self.shots += 1
-        self.muzzle_light.color = color.rgba32(255, 190, 90, 55)
+        self.muzzle_light.color = color.rgba32(255, 190, 90, 130)
         invoke(setattr, self.muzzle_light, "color", color.rgba32(255, 190, 90, 0),
                delay=0.05)
+        self.shake = 0.09
 
-        hit = raycast(camera.world_position, self.aim_ray(), distance=60,
-                      debug=False)
+        direction = self.aim_ray()
+        hit = raycast(camera.world_position, direction, distance=60, debug=False)
+        # The tracer leaves from below the eye rather than from the camera
+        # itself, which would put it exactly behind the reticle and make it
+        # invisible. Slung low and right, it reads as coming from the gun.
+        muzzle = (camera.world_position + camera.down * 0.34 + camera.right * 0.22
+                  + camera.forward * 1.4)
+        end = hit.world_point if hit.hit else camera.world_position + direction * 60
+        self.effects.tracer(muzzle, end)
+
         if hit.hit and hit.entity in self.targets:
             self.register_hit(hit.entity)
+        elif hit.hit:
+            self.effects.impact(Vec3(hit.world_point), Vec3(hit.world_normal))
 
     def register_hit(self, target: Entity) -> None:
         self.hits += 1
         # Smaller and further targets are worth more.
         distance = (target.world_position - camera.world_position).length()
-        self.score += int(40 + (1.3 - target.scale_x) * 60 + distance * 3)
+        points = int(40 + (1.3 - target.scale_x) * 60 + distance * 3)
+        self.score += points
+        self.effects.burst(Vec3(target.world_position), target.scale_x)
+        self.popup(target.world_position, points)
+        self.hitmark.enabled = True
+        self.hitmark_scale = 1.5
+        self.hitmark.scale = 1.5
+        self.shake = 0.16
         self.targets.remove(target)
-        destroy(target)
+        # Only a light shove downrange: enough to sell the impact, not enough
+        # to carry the wreck through the back wall before it hits the floor.
+        push = Vec3(target.drift.x, 1.6, 1.2) + Vec3(
+            random.uniform(-1.5, 1.5), random.uniform(0, 1.2),
+            random.uniform(-0.8, 0.8))
+        self.effects.wreck(target, push)
         self.spawn_target()
+
+    def popup(self, world_position: Vec3, points: int) -> None:
+        """Float the score for a kill up from where the drone was."""
+        pos = camera.get_relative_point(scene, world_position)
+        if pos.z <= 0.1:
+            return
+        half = math.tan(math.radians(camera.fov) / 2)
+        text = Text(parent=camera.ui, text=f"+{points}", origin=(0, 0), scale=0.9,
+                    color=color.rgb32(232, 108, 58),
+                    position=(pos.x / (pos.z * 2 * half),
+                              pos.y / (pos.z * 2 * half), -0.05))
+        self.popups.append([text, 0.9])
 
     # -- per frame --------------------------------------------------------
     def update(self, dt: float) -> None:
         state = self.source.snapshot()
         self.update_aim()
+        self.effects.update(dt)
+        self._update_feedback(dt)
 
         # The device counts debounced presses, so a dropped packet cannot lose
         # or duplicate a shot the way watching for a 0->1 edge would.
@@ -324,7 +590,7 @@ class Range3D:
                 target.y += target.drift.y * dt
                 if abs(target.x) > 9.0:
                     target.drift.x *= -1
-                if not 1.4 < target.y < 6.6:
+                if not 1.5 < target.y < 7.8:
                     target.drift.y *= -1
                 target.bob += dt
                 # A slight hover wobble and a bank into the turn, so they read
@@ -335,6 +601,37 @@ class Range3D:
                     rotor.rotation_y += 1400 * dt
 
         self.refresh_hud(state)
+
+    def _update_feedback(self, dt: float) -> None:
+        # Recoil kick. The camera is fixed in a light-gun game, so a short
+        # decaying jolt is the only thing that gives a shot any weight.
+        if self.shake > 0:
+            self.shake = max(0.0, self.shake - dt * 0.6)
+            camera.position = self.camera_home + Vec3(
+                random.uniform(-1, 1) * self.shake,
+                random.uniform(-1, 1) * self.shake,
+                0,
+            )
+        elif camera.position != self.camera_home:
+            camera.position = self.camera_home
+
+        if self.hitmark.enabled:
+            self.hitmark_scale = max(1.0, self.hitmark_scale - dt * 6)
+            self.hitmark.scale = self.hitmark_scale
+            if self.hitmark_scale <= 1.0 and self.shake <= 0.02:
+                self.hitmark.enabled = False
+
+        alive = []
+        for entry in self.popups:
+            text, remaining = entry
+            remaining -= dt
+            if remaining <= 0:
+                destroy(text)
+                continue
+            text.y += dt * 0.12
+            text.alpha = min(1.0, remaining * 2.5)
+            alive.append([text, remaining])
+        self.popups = alive
 
     def _finish_reload(self) -> None:
         self.ammo = MAG_SIZE
@@ -441,6 +738,8 @@ def main() -> int:
     parser.add_argument("--shot", help="save a screenshot before quitting")
     parser.add_argument("--selftest", action="store_true",
                         help="check the reticle and the raycast agree, then exit")
+    parser.add_argument("--demo", action="store_true",
+                        help="play the round automatically, for screenshots")
     args = parser.parse_args()
 
     source = AimSource()
@@ -468,6 +767,25 @@ def main() -> int:
             if counters["frames"] > 5:
                 run_selftest(game)
             return
+
+        if args.demo:
+            if game.state != "playing":
+                game.start_round()
+            # Walk the reticle onto a drone and shoot it, so a screenshot
+            # catches the game mid-fight instead of at the ready banner.
+            if game.targets and counters["frames"] % 20 == 0:
+                target = game.targets[counters["frames"] // 20 % len(game.targets)]
+                pos = camera.get_relative_point(scene, target.world_position)
+                half = math.tan(math.radians(camera.fov) / 2)
+                shot = counters["frames"] // 20
+                # Every fourth shot is thrown wide on purpose, so the demo
+                # exercises the wall impact path and not just clean kills.
+                miss = 0.14 if shot % 4 == 3 else 0.0
+                game.reticle_pos = Vec2(pos.x / (pos.z * 2 * half) + miss,
+                                        pos.y / (pos.z * 2 * half) - miss)
+                game.reticle.position = (game.reticle_pos.x, game.reticle_pos.y, 0)
+                game.ammo = MAG_SIZE
+                game.fire()
 
         game.update(dt)
 
