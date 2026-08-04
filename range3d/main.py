@@ -25,6 +25,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 from ursina import (  # noqa: E402
+    Cylinder,
+    Grid,
     Entity,
     Text,
     Ursina,
@@ -52,6 +54,45 @@ SMOOTHING = 0.45
 TARGET_COUNT = 5
 
 
+def make_drone(position: Vec3, scale: float) -> Entity:
+    """A quadcopter built from primitives.
+
+    Modelled from shapes rather than a downloaded mesh: at this size the
+    silhouette is all that reads, and it keeps the repo free of assets with
+    licences attached.
+    """
+    shell = color.rgb32(58, 62, 70)
+    dark = color.rgb32(34, 37, 43)
+
+    drone = Entity(position=position, scale=scale, collider="box")
+    # The collider is the whole silhouette; the visible parts hang off it as
+    # children so a shot anywhere on the drone counts.
+    drone.scale_y = scale * 0.8
+
+    Entity(parent=drone, model="cube", scale=(0.62, 0.42, 0.52), color=shell)
+    Entity(parent=drone, model="cube", scale=(0.34, 0.30, 0.62), color=dark,
+           position=(0, 0.1, -0.06))
+    # Forward sensor, the one warm detail against all the grey.
+    Entity(parent=drone, model="sphere", scale=(0.17, 0.28, 0.17),
+           position=(0, 0.02, -0.34), color=color.rgb32(226, 92, 66))
+
+    rotors = []
+    for dx, dz in ((1, 1), (1, -1), (-1, 1), (-1, -1)):
+        angle = math.degrees(math.atan2(dz, dx))
+        Entity(parent=drone, model="cube", scale=(0.78, 0.13, 0.13),
+               position=(dx * 0.3, 0, dz * 0.3), rotation=(0, -angle, 0),
+               color=dark)
+        pod = Entity(parent=drone, model="cube", scale=(0.2, 0.22, 0.2),
+                     position=(dx * 0.62, 0.02, dz * 0.62), color=shell)
+        rotor = Entity(parent=pod, model=Cylinder(resolution=10, radius=0.5,
+                                                  height=0.06),
+                       scale=(2.9, 1, 2.9), position=(0, 0.6, 0),
+                       color=color.rgba32(40, 44, 52, 150))
+        rotors.append(rotor)
+    drone.rotors = rotors
+    return drone
+
+
 class Range3D:
     def __init__(self, source: AimSource) -> None:
         self.source = source
@@ -74,38 +115,46 @@ class Range3D:
 
     # -- scene ------------------------------------------------------------
     def _build_world(self) -> None:
-        window.color = color.rgb32(11, 14, 20)
+        window.color = color.rgb32(228, 231, 235)
         # Eye height sits mid-way up the target band so the reticle rests at
         # the centre of the action instead of below it.
         camera.position = Vec3(0, 3.4, -9)
         camera.rotation = Vec3(0, 0, 0)
         camera.fov = 70
 
-        Entity(
-            model="plane", scale=(40, 1, 40), position=(0, 0, 6),
-            color=color.rgb32(24, 28, 38),
-        )
-        # Back wall the targets sit against, so shots have something behind
-        # them and the depth reads properly.
-        Entity(
-            model="cube", scale=(30, 14, 0.4), position=(0, 7, 14),
-            color=color.rgb32(31, 37, 50),
-        )
-        for x in (-15, 15):
-            Entity(
-                model="cube", scale=(0.4, 14, 26), position=(x, 7, 2),
-                color=color.rgb32(26, 31, 42),
-            )
-        # Floor stripes give the eye something to judge distance against.
-        for z in range(-4, 15, 3):
-            Entity(
-                model="cube", scale=(30, 0.02, 0.08), position=(0, 0.01, z),
-                color=color.rgb32(38, 45, 60),
-            )
+        wall = color.rgb32(242, 243, 245)
+        tile = color.rgba32(120, 130, 145, 70)
+
+        Entity(model="plane", scale=(60, 1, 60), position=(0, 0, 6),
+               color=color.rgb32(214, 217, 222))
+
+        # Back wall the drones fly against. The tile grid is what makes the
+        # room read as a test chamber and gives the eye a scale reference.
+        Entity(model="cube", scale=(34, 16, 0.4), position=(0, 8, 14), color=wall)
+        Entity(model=Grid(17, 8), scale=(34, 16), position=(0, 8, 13.75),
+               color=tile)
+        for x in (-17, 17):
+            Entity(model="cube", scale=(0.4, 16, 30), position=(x, 8, 2),
+                   color=color.rgb32(236, 238, 241))
+
+        # Floor bands, dark with one warm stripe, running across the room so
+        # depth is readable at a glance.
+        for z, shade in ((1.5, 150), (4.5, 172), (10.5, 172), (13.2, 150)):
+            Entity(model="cube", scale=(34, 0.02, 0.55), position=(0, 0.02, z),
+                   color=color.rgb32(shade, shade + 4, shade + 10))
+        Entity(model="cube", scale=(34, 0.02, 0.7), position=(0, 0.03, 7.5),
+               color=color.rgb32(226, 138, 62))
+
+        # Blocks on the floor, both as scenery and as something for stray
+        # shots to stop against instead of vanishing into the distance.
+        for x, z, h in ((-7.5, 8.5, 2.2), (7.5, 8.5, 2.2), (-2.4, 12.0, 1.5),
+                        (3.6, 12.0, 1.8)):
+            Entity(model="cube", scale=(1.5, h, 1.5), position=(x, h / 2, z),
+                   color=color.rgb32(250, 250, 252), collider="box")
 
         self.muzzle_light = Entity(
-            model="quad", parent=camera.ui, scale=6, color=color.rgba32(255, 190, 90, 0),
-            z=1,
+            model="quad", parent=camera.ui, scale=6,
+            color=color.rgba32(255, 190, 90, 0), z=1,
         )
 
     def _build_hud(self) -> None:
@@ -123,20 +172,22 @@ class Range3D:
         Entity(parent=self.reticle, model="circle", scale=0.005, z=-0.02,
                color=color.rgb32(255, 235, 220))
 
+        # Dark on light: the room is white, so the readable HUD from the old
+        # dark scene would have been invisible here.
+        ink = color.rgb32(38, 44, 54)
+        faint = color.rgb32(120, 130, 145)
         self.hud_score = Text(parent=camera.ui, text="", origin=(-0.5, 0.5),
-                              position=(-0.86, 0.46), scale=1.1)
+                              position=(-0.86, 0.46), scale=1.1, color=ink)
         self.hud_timer = Text(parent=camera.ui, text="", origin=(0, 0.5),
-                              position=(0, 0.46), scale=1.4)
+                              position=(0, 0.46), scale=1.4, color=ink)
         self.hud_ammo = Text(parent=camera.ui, text="", origin=(0.5, 0.5),
-                             position=(0.86, 0.46), scale=1.1)
+                             position=(0.86, 0.46), scale=1.1, color=ink)
         self.hud_link = Text(parent=camera.ui, text="", origin=(-0.5, -0.5),
-                             position=(-0.86, -0.46), scale=0.75,
-                             color=color.rgb32(120, 135, 160))
+                             position=(-0.86, -0.46), scale=0.75, color=faint)
         self.banner = Text(parent=camera.ui, text="", origin=(0, 0), scale=2.2,
-                           color=color.rgb32(235, 240, 250))
+                           color=ink)
         self.banner_sub = Text(parent=camera.ui, text="", origin=(0, 0),
-                               position=(0, -0.07), scale=1.0,
-                               color=color.rgb32(150, 165, 190))
+                               position=(0, -0.07), scale=1.0, color=faint)
         self._show_banner("RANGE READY", "pull the trigger to start")
 
     def _show_banner(self, title: str, sub: str) -> None:
@@ -170,19 +221,13 @@ class Range3D:
         )
 
     def spawn_target(self) -> None:
-        target = Entity(
-            model="sphere",
-            color=color.rgb32(255, 96, 74),
-            position=Vec3(random.uniform(-10, 10), random.uniform(1.3, 6.4),
+        target = make_drone(
+            position=Vec3(random.uniform(-8.5, 8.5), random.uniform(1.8, 6.2),
                           random.uniform(6, 13)),
-            scale=random.uniform(0.75, 1.25),
-            collider="sphere",
+            scale=random.uniform(0.85, 1.35),
         )
-        target.ring = Entity(
-            parent=target, model="sphere", scale=1.28,
-            color=color.rgba32(255, 150, 120, 45),
-        )
-        target.drift = Vec3(random.uniform(-1.1, 1.1), random.uniform(-0.5, 0.5), 0)
+        target.drift = Vec3(random.uniform(-1.3, 1.3), random.uniform(-0.5, 0.5), 0)
+        target.bob = random.uniform(0, 6.28)
         target.born = self.elapsed
         self.targets.append(target)
 
@@ -277,11 +322,17 @@ class Range3D:
             for target in list(self.targets):
                 target.x += target.drift.x * dt
                 target.y += target.drift.y * dt
-                if abs(target.x) > 10.5:
+                if abs(target.x) > 9.0:
                     target.drift.x *= -1
-                if not 1.2 < target.y < 6.6:
+                if not 1.4 < target.y < 6.6:
                     target.drift.y *= -1
-                target.ring.scale = 1.28 + math.sin(self.elapsed * 4) * 0.06
+                target.bob += dt
+                # A slight hover wobble and a bank into the turn, so they read
+                # as flying rather than sliding along a rail.
+                target.y += math.sin(target.bob * 3.1) * dt * 0.35
+                target.rotation_z = -target.drift.x * 7
+                for rotor in target.rotors:
+                    rotor.rotation_y += 1400 * dt
 
         self.refresh_hud(state)
 
@@ -325,15 +376,15 @@ def run_selftest(game: "Range3D") -> None:
     game.targets.clear()
 
     def place(ui_x: float, ui_y: float, distance: float = 10.0) -> Entity:
-        """Put a target exactly where the reticle at (ui_x, ui_y) points."""
+        """Put a drone exactly where the reticle at (ui_x, ui_y) points."""
         game.reticle_pos = Vec2(ui_x, ui_y)
         game.reticle.position = (ui_x, ui_y, 0)
         spot = camera.world_position + game.aim_ray() * distance
-        target = Entity(model="sphere", position=spot, scale=0.8,
-                        collider="sphere", color=color.rgb32(255, 96, 74))
-        target.ring = Entity(parent=target, model="sphere", scale=1.2,
-                             color=color.rgba32(255, 150, 120, 45))
+        # A real drone rather than a stand-in sphere, so this covers the
+        # collider the game actually spawns.
+        target = make_drone(position=spot, scale=1.0)
         target.drift = Vec3(0, 0, 0)
+        target.bob = 0.0
         game.targets.append(target)
         return target
 
