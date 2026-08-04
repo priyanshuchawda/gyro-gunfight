@@ -37,7 +37,9 @@ static void below(const std::string &name, float got, float limit) {
 
 // Firmware settings, so the tests describe the shipped configuration.
 static const float ALPHA = 0.98f;
-static const float YAW_DECAY = 0.995f;
+static const float YAW_DECAY = 0.9998f;
+// Residual gyro bias measured on the board with the decay disabled: 0.31°/min.
+static const float MEASURED_BIAS_DPS = 0.31f / 60.0f;
 static const float DEADZONE = 8.0f / 32.8f;  // +-1000 dps range
 static const float DT = 0.01f;               // 100 Hz
 static const Vec3 STILL = {0, 0, 0};
@@ -54,7 +56,7 @@ static void settle(AttitudeFilter &f, const Vec3 &acc, int samples) {
 }
 
 int main() {
-  printf("complementary filter, alpha %.2f, yaw decay %.3f, %.0f Hz\n\n", ALPHA,
+  printf("complementary filter, alpha %.2f, yaw decay %.4f, %.0f Hz\n\n", ALPHA,
          YAW_DECAY, 1.0f / DT);
 
   {
@@ -95,55 +97,91 @@ int main() {
   }
 
   {
-    // Yaw has no gravity anchor, so the decay is all that stops it leaving.
-    // Without it this same bias would reach 120 degrees.
+    // The measured residual is 0.005 dps, fifty times under the 0.244 dps
+    // deadzone, so in practice it never reaches the integrator at all and the
+    // decay is not what protects us. Worth stating explicitly, because it is
+    // easy to credit the decay for drift the deadzone already removed.
     AttitudeFilter f(ALPHA, YAW_DECAY, DEADZONE);
     const Vec3 level = gravityAt(0, 0);
-    const Vec3 biased = {0, 0, 2.0f};
-    for (int i = 0; i < 6000; i++) f.update(level, biased, DT);
-    below("yaw decay bounds a 2 dps bias", fabsf(f.yaw()), 5.0f);
+    for (int i = 0; i < 30000; i++)
+      f.update(level, {0, 0, MEASURED_BIAS_DPS}, DT);
+    near("measured drift never clears the deadzone", f.yaw(), 0.0f, 0.0001f);
+
+    // So the decay's real job is bounding whatever does clear it. Just above
+    // the deadzone is the worst case that still gets through, and it settles
+    // at rate * 50. Calibration has to keep bias well under this for the
+    // gentler decay to be safe.
+    AttitudeFilter g(ALPHA, YAW_DECAY, DEADZONE);
+    for (int i = 0; i < 30000; i++)
+      g.update(level, {0, 0, DEADZONE * 1.2f}, DT);
+    near("a bias just past the deadzone settles at ~15 deg", g.yaw(), 14.6f,
+         1.0f);
   }
 
   {
-    // A deliberate turn has to move the crosshair, but not by the textbook
-    // 45 degrees: the decay compounds over the 50 samples and eats about an
-    // eighth of the swing. Asserting the honest number keeps that cost visible
-    // instead of hiding it inside a loose tolerance.
+    // The price of the gentler decay, stated plainly: it no longer rescues a
+    // badly calibrated gyro. A 2 dps bias that the old 0.995 held near 4
+    // degrees now runs to about 100, which is why the gun must be still at
+    // boot and why 'c' exists.
+    AttitudeFilter f(ALPHA, YAW_DECAY, DEADZONE);
+    const Vec3 level = gravityAt(0, 0);
+    const Vec3 badly_biased = {0, 0, 2.0f};
+    for (int i = 0; i < 30000; i++) f.update(level, badly_biased, DT);
+    near("a 2 dps bias is no longer contained", f.yaw(), 100.0f, 5.0f);
+  }
+
+  {
+    // The reason for the change. Holding on a target used to bleed 39% of the
+    // aim offset every second, sliding the crosshair out from under you.
+    AttitudeFilter f(ALPHA, YAW_DECAY, DEADZONE);
+    const Vec3 level = gravityAt(0, 0);
+    for (int i = 0; i < 50; i++) f.update(level, {0, 0, 90.0f}, DT);
+    const float aimed = f.yaw();
+    for (int i = 0; i < 300; i++) f.update(level, STILL, DT);  // hold 3 s
+    const float kept = f.yaw() / aimed;
+    if (kept > 0.94f) {
+      printf("  ok    %-48s %7.1f%% kept\n", "aim holds while tracking a target",
+             kept * 100.0f);
+    } else {
+      printf("  FAIL  %-48s only %.1f%% kept\n",
+             "aim holds while tracking a target", kept * 100.0f);
+      failures++;
+    }
+  }
+
+  {
+    // A deliberate turn now reports very nearly the true angle. Under the old
+    // 0.995 this same swing came back 39.7, an eighth short.
     //
-    //   0.9 * sum(0.995^k, k=1..50) = 39.7
+    //   0.9 * sum(0.9998^k, k=1..50) = 44.8
     AttitudeFilter f(ALPHA, YAW_DECAY, DEADZONE);
     const Vec3 level = gravityAt(0, 0);
     const Vec3 turning = {0, 0, 90.0f};  // 90 dps for half a second
     for (int i = 0; i < 50; i++) f.update(level, turning, DT);
-    near("90 dps for 0.5 s yaws 39.7, not the ideal 45", f.yaw(), 39.7f, 0.5f);
+    near("90 dps for 0.5 s yaws 44.8, near the ideal 45", f.yaw(), 44.8f, 0.5f);
   }
 
   {
-    // The consequence of that decay at full stretch: yaw cannot exceed
-    // rate * dt * d / (1 - d), which is 1.99 degrees per dps of turn rate, no
-    // matter how far you keep turning. Sustained yaw tracks how fast you are
-    // turning rather than how far you have turned. Without a magnetometer
-    // there is no way around this, so it is pinned here rather than
-    // discovered mid-game.
-    AttitudeFilter fast(ALPHA, YAW_DECAY, DEADZONE);
-    AttitudeFilter slow(ALPHA, YAW_DECAY, DEADZONE);
+    // Yaw is still bounded at rate * 50, but that ceiling is now so far away
+    // that a real swing never approaches it. The old decay put it at 1.99
+    // degrees per dps, so a sustained turn described how fast you were turning
+    // rather than how far, and long sweeps simply did not arrive.
+    AttitudeFilter f(ALPHA, YAW_DECAY, DEADZONE);
     const Vec3 level = gravityAt(0, 0);
-    for (int i = 0; i < 4000; i++) {
-      fast.update(level, {0, 0, 90.0f}, DT);
-      slow.update(level, {0, 0, 30.0f}, DT);
-    }
-    near("a held 90 dps turn saturates near 179 deg", fast.yaw(), 179.1f, 1.0f);
-    near("a held 30 dps turn saturates near 59.7 deg", slow.yaw(), 59.7f, 1.0f);
+    for (int i = 0; i < 100; i++) f.update(level, {0, 0, 120.0f}, DT);
+    near("a full 120 dps second turns a full 120 deg", f.yaw(), 119.4f, 1.0f);
   }
 
   {
-    // Released mid-turn, yaw has to come home rather than stick.
+    // Yaw still comes home eventually, just over a minute rather than a couple
+    // of seconds, which is slow enough to aim through and quick enough that
+    // nothing accumulates across a round.
     AttitudeFilter f(ALPHA, YAW_DECAY, DEADZONE);
     const Vec3 level = gravityAt(0, 0);
     for (int i = 0; i < 50; i++) f.update(level, {0, 0, 90.0f}, DT);
     const float peak = f.yaw();
-    for (int i = 0; i < 1000; i++) f.update(level, STILL, DT);
-    below("yaw returns to centre once the turn stops", fabsf(f.yaw()),
+    for (int i = 0; i < 30000; i++) f.update(level, STILL, DT);  // 5 minutes
+    below("yaw still comes home eventually", fabsf(f.yaw()),
           fabsf(peak) * 0.05f);
   }
 

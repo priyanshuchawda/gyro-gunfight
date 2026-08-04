@@ -241,8 +241,8 @@ check(
 );
 
 console.log("\nsettings persistence");
-run("store.set('gg.sens', 75)");
-check("sensitivity survives a reload", get("store.get('gg.sens', 40)"), 75);
+run("store.set('gg.sens2', 75)");
+check("sensitivity survives a reload", get("store.get('gg.sens2', 40)"), 75);
 check("an unset key falls back", get("store.get('gg.nothing', 40)"), 40);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

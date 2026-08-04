@@ -29,21 +29,32 @@ Measured on hardware: **100 Hz**, noise ≈0.03°, yaw drift ≈0.2° over 10 s.
 ### What yaw actually reports
 
 Pitch and roll are anchored to gravity, so they mean what they say. Yaw has no
-compass to anchor it, and the 0.995 per-sample decay that stops it drifting
-also stops it integrating honestly. Two consequences fall out of that, both
-pinned by `test_attitude.cpp`:
+compass, so it is gyro-integrated and bled slowly back to centre.
 
-- A half-second swing at 90 dps reports **39.7°, not the ideal 45°**. The decay
-  eats roughly an eighth of every swing at that length.
-- A *sustained* turn saturates at **1.99° per dps of turn rate**, so holding
-  90 dps stops at 179° and holding 30 dps stops at 59.7°, however far you
-  actually turn. Past about a second, yaw describes how fast you are turning
-  rather than how far you have turned.
+That decay used to be **0.995 per sample**, which cost 39% of the aim offset
+every second. Holding on a target near the screen edge meant watching the
+crosshair slide out from under you, and no sensitivity setting could
+compensate. It also compressed real movement: a half-second 90 dps swing came
+back as 39.7° instead of 45°, and sustained turns saturated at 1.99° per dps,
+so past a second yaw described how *fast* you were turning rather than how far.
 
-Neither is a bug to fix; without a magnetometer the choice is between a
-crosshair that wanders off screen and one that under-reports long turns. It
-matters for game design: aiming should be built around short flicks, which the
-filter reports faithfully, rather than long sweeps, which it compresses.
+Measuring with the decay switched off entirely showed real drift after
+calibration is **0.31°/min** — a severe aiming penalty bought for a quarter of
+a degree. It is now **0.9998**, and the behaviour pinned by `test_attitude.cpp`
+is:
+
+| | 0.995 (old) | 0.9998 (now) |
+|---|---|---|
+| Aim offset kept after 3 s | 22% | 94% |
+| A 0.5 s, 90 dps swing | 39.7° | 44.8° |
+| Sustained turn ceiling | 1.99°/dps | 50°/dps |
+| Bias just past the deadzone settles at | 0.4° | 14.6° |
+
+The measured 0.005 dps residual never reaches the integrator at all: the
+0.244° deadzone removes it outright, so it is the deadzone rather than the
+decay that handles real drift. The decay only bounds what leaks past, and the
+last row is the price — this configuration leans on calibration being good, so
+hold the gun still at boot and press `c` if the aim starts wandering.
 
 ## Commands (host → device)
 
