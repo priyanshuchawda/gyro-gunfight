@@ -88,7 +88,19 @@ pactl set-sink-volume @DEFAULT_SINK@ 55%
 node tools/check_web.js       # page and script agree on ids and classes
 node tools/test_range.js      # round flow, ammo, reload, waves, timer
 python3 tools/visual_check.py # real browser: renders, connects, plays
+
+g++ -std=c++11 -o /tmp/tt firmware/aim-controller/test/test_trigger.cpp && /tmp/tt
 ```
+
+The trigger test runs the firmware's own debounce header on the host, which is
+the only way to reach the cases that break it: a switch chattering forty times
+in three milliseconds, taps landing either side of the threshold, and a press
+spanning the `millis()` rollover. None of those can be staged by pressing the
+button.
+
+It pins one property worth knowing as a player: **a press shorter than 25 ms is
+discarded, not delayed.** Deliberate taps run 50 ms and longer, so this only
+bites if the switch itself is failing.
 
 The visual check needs the bridge running and Chromium installed:
 

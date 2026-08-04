@@ -2,6 +2,8 @@
 #include <Wire.h>
 #include <math.h>
 
+#include "trigger.h"
+
 // NodeMCU I2C
 static const int PIN_SDA = 4;  // D2
 static const int PIN_SCL = 5;  // D1
@@ -67,10 +69,8 @@ static uint32_t gyro_clips = 0;     // samples that hit the full-scale rail
 static Vec3 gyro_peak = {0, 0, 0};  // largest |rate| seen since the last report
 static uint32_t peak_report_ms = 0;
 
-static int trigger_state = 0;       // debounced level
-static int trigger_raw_last = 0;    // last raw sample, for restarting the timer
-static uint32_t trigger_changed_ms = 0;
-static uint32_t shot_count = 0;     // monotonic, so hosts can count by delta
+// Same implementation the host tests drive; see test/test_trigger.cpp.
+static TriggerDebouncer trigger(DEBOUNCE_MS);
 
 static uint8_t writeReg(uint8_t reg, uint8_t val) {
   Wire.beginTransmission(MPU_ADDR);
@@ -171,19 +171,7 @@ static float deadzone(float v) {
 // Runs every loop rather than every sample so a quick tap between IMU reads
 // still lands inside the debounce window.
 static void pollTrigger() {
-  int raw = (digitalRead(PIN_TRIGGER) == LOW) ? 1 : 0;
-  uint32_t now = millis();
-
-  if (raw != trigger_raw_last) {
-    trigger_raw_last = raw;
-    trigger_changed_ms = now;
-    return;
-  }
-
-  if (raw != trigger_state && (now - trigger_changed_ms) >= DEBOUNCE_MS) {
-    trigger_state = raw;
-    if (raw) shot_count++;
-  }
+  trigger.update(digitalRead(PIN_TRIGGER) == LOW, millis());
 }
 
 void setup() {
@@ -262,5 +250,5 @@ void loop() {
   yaw = (yaw + gz * dt) * YAW_DECAY;
 
   Serial.printf("AIM,%lu,%.2f,%.2f,%.2f,%d,%lu\n", millis(), pitch, yaw, roll,
-                trigger_state, shot_count);
+                trigger.pressed() ? 1 : 0, (unsigned long)trigger.shots());
 }
