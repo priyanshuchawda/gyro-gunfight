@@ -156,8 +156,13 @@ static bool imuBegin() {
   return Wire.endTransmission() == 0;
 }
 
-static void calibrate(uint16_t samples = 400) {
-  Serial.println("# CAL start - hold the gun still");
+// A calibration that wandered further than this was not a measurement of bias,
+// it was a measurement of the player picking the gun up.
+static const float CAL_MAX_WANDER = 3.0f;
+static const uint8_t CAL_ATTEMPTS = 4;
+
+// Returns the wandering seen, or -1 if the IMU gave nothing.
+static float measureBias(uint16_t samples, Vec3 &out) {
   Vec3 sum = {0, 0, 0};
   Vec3 lo = {1e9f, 1e9f, 1e9f}, hi = {-1e9f, -1e9f, -1e9f};
   Vec3 acc, rot;
@@ -175,30 +180,56 @@ static void calibrate(uint16_t samples = 400) {
     }
     delay(3);
   }
-  if (got == 0) {
-    Serial.println("# CAL failed - no IMU data");
-    return;
-  }
-  Vec3 gyro_bias;
-  gyro_bias.x = sum.x / got;
-  gyro_bias.y = sum.y / got;
-  gyro_bias.z = sum.z / got;
+  if (got == 0) return -1.0f;
+  out.x = sum.x / got;
+  out.y = sum.y / got;
+  out.z = sum.z / got;
+  return max(max(hi.x - lo.x, hi.y - lo.y), hi.z - lo.z);
+}
 
-  // Say so when the gun clearly moved during the measurement. This used to
-  // fail silently, and the only evidence was a crosshair that would not stay
-  // put once the game started.
-  const float wander = max(max(hi.x - lo.x, hi.y - lo.y), hi.z - lo.z);
-  if (wander > BIAS_RATE_SPREAD * 3) {
-    Serial.printf("# CAL moved during calibration (%.1f dps of wander) - "
-                  "will self-correct once held still\n", wander);
+static void calibrate(uint16_t samples = 400) {
+  Serial.println("# CAL start - hold the gun still");
+
+  Vec3 best = {0, 0, 0};
+  float best_wander = 1e9f;
+  bool clean = false;
+
+  for (uint8_t attempt = 1; attempt <= CAL_ATTEMPTS && !clean; attempt++) {
+    Vec3 measured;
+    const float wander = measureBias(samples, measured);
+    if (wander < 0) {
+      Serial.println("# CAL failed - no IMU data");
+      return;
+    }
+    if (wander < best_wander) {
+      best_wander = wander;
+      best = measured;
+    }
+    clean = wander <= CAL_MAX_WANDER;
+    if (!clean) {
+      Serial.printf("# CAL attempt %u saw %.1f dps of movement, retrying - "
+                    "put the gun down\n", attempt, wander);
+    }
   }
 
-  bias_tracker.seed(gyro_bias);
+  // Refusing a bad measurement rather than warning about it and using it
+  // anyway. A calibration taken mid-swing was reading tens of dps of bias,
+  // and yaw multiplies that by fifty.
+  Vec3 acc, rot;
+  float t;
+  bias_tracker.seed(best, clean);
   if (readImu(acc, rot, t)) attitude.seed(acc);
   calibrated = true;
   last_us = micros();
-  Serial.printf("# CAL done bias=%.3f,%.3f,%.3f samples=%u wander=%.2f\n",
-                gyro_bias.x, gyro_bias.y, gyro_bias.z, got, wander);
+
+  if (clean) {
+    Serial.printf("# CAL done bias=%.3f,%.3f,%.3f wander=%.2f\n", best.x,
+                  best.y, best.z, best_wander);
+  } else {
+    Serial.printf("# CAL UNTRUSTED after %u attempts, best wander %.1f dps - "
+                  "hold the gun still for a second and it will fix itself\n",
+                  CAL_ATTEMPTS, best_wander);
+  }
 }
 
 // Runs every loop rather than every sample so a quick tap between IMU reads
@@ -274,14 +305,24 @@ void loop() {
   // Fed the raw reading, not the corrected one: the tracker judges stillness
   // from how much the gyro varies, and a wrong bias must not hide that.
   bias_tracker.update(rot, acc, dt);
+  if (bias_tracker.consumeSnap()) {
+    // Yaw up to here was integrated under a bias now known to be wrong, so it
+    // is not an aim offset worth keeping. Left alone it would bleed off at 2%
+    // per second from wherever the bad bias had driven it.
+    attitude.zeroYaw();
+    const Vec3 b = bias_tracker.bias();
+    Serial.printf("# BIAS recovered %.3f,%.3f,%.3f - yaw re-centred\n", b.x,
+                  b.y, b.z);
+  }
   attitude.update(acc, bias_tracker.correct(rot), dt);
 
   uint32_t now_ms = millis();
   if (now_ms - bias_report_ms >= 5000) {
     bias_report_ms = now_ms;
     const Vec3 b = bias_tracker.bias();
-    Serial.printf("# BIAS %.3f,%.3f,%.3f still=%d\n", b.x, b.y, b.z,
-                  bias_tracker.still() ? 1 : 0);
+    Serial.printf("# BIAS %.3f,%.3f,%.3f still=%d trusted=%d wander=%.2f\n",
+                  b.x, b.y, b.z, bias_tracker.still() ? 1 : 0,
+                  bias_tracker.trusted() ? 1 : 0, bias_tracker.wander());
   }
 
   Serial.printf("AIM,%lu,%.2f,%.2f,%.2f,%d,%lu\n", millis(), attitude.pitch(),

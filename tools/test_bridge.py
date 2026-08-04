@@ -89,6 +89,29 @@ def main() -> int:
     check("banner lines are echoed to the console",
           "# CAL done" in captured.getvalue(), True)
 
+    # The device can stream perfectly while running on a gyro bias it knows is
+    # wrong. That is a broken aim, not a broken link, so the game has to be
+    # able to tell them apart.
+    check("bias starts out trusted", board.state().bias_ok, True)
+    with contextlib.redirect_stdout(io.StringIO()):
+        board.send("# CAL UNTRUSTED after 4 attempts, best wander 200.5 dps\n")
+    check("an untrusted calibration is noticed", board.state().bias_ok, False)
+    with contextlib.redirect_stdout(io.StringIO()):
+        board.send("# BIAS 0.0,-5.4,-0.4 still=1 trusted=1 wander=0.30\n")
+    check("and cleared once the device trusts itself",
+          board.state().bias_ok, True)
+    with contextlib.redirect_stdout(io.StringIO()):
+        board.send("# BIAS 1.7,-5.8,4.3 still=0 trusted=0 wander=0.00\n")
+    check("a trusted=0 report is picked up too", board.state().bias_ok, False)
+    with contextlib.redirect_stdout(io.StringIO()):
+        board.send("# BIAS recovered 0.0,-5.8,-0.2 - yaw re-centred\n")
+    check("recovery clears the warning", board.state().bias_ok, True)
+    # "# PEAK ..." must not be mistaken for either, or every second would
+    # flip the flag.
+    with contextlib.redirect_stdout(io.StringIO()):
+        board.send("# PEAK gx=2.4 gy=5.1 gz=3.8 dps clips=0\n")
+    check("peak lines leave it alone", board.state().bias_ok, True)
+
     for junk in (
         "AIM,3000,not_a_number,2.0,3.0,0,9\n",
         "AIM,3000,1.0\n",
