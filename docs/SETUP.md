@@ -98,7 +98,11 @@ tools/run_tests.sh --all  # plus the browser and the live controller
 | `check_web.js` | Page and script agree on ids and classes |
 | `test_range.js` | Round flow, ammo, reload, waves, timer |
 | `test_bridge.py` | Serial parsing, through a pseudo-terminal |
+| `range3d --selftest` | Reticle and raycast agree, centre and all corners |
 | `visual_check.py` | Real browser renders, connects and plays |
+
+The 3D range needs a virtual environment; the runner skips that suite rather
+than failing when there isn't one. See `range3d/README.md`.
 
 The two C++ suites run the firmware's own headers on the host. That is the only
 way to reach the cases that actually break them — a switch chattering forty

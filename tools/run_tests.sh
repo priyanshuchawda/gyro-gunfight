@@ -40,6 +40,13 @@ run "page and script"   node tools/check_web.js
 run "game rules"        node tools/test_range.js
 run "bridge parsing"    python3 tools/test_bridge.py
 
+# The 3D range needs the venv, which is not required for anything else.
+if [[ -x .venv/bin/python ]]; then
+  run "3D aim projection" .venv/bin/python range3d/main.py --simulate --selftest
+else
+  printf '\n\033[33m-- skipped 3D range: no .venv (see range3d/README.md)\033[0m\n'
+fi
+
 if [[ $WITH_BROWSER == 1 ]]; then
   if curl -sf -m 3 http://127.0.0.1:8000/aim > /dev/null 2>&1; then
     run "browser and live controller" python3 tools/visual_check.py
