@@ -45,7 +45,20 @@ static const int16_t GYRO_CLIP_RAW = 32000;
 static const float COMP_ALPHA = 0.98f;
 // Yaw has no absolute reference (no magnetometer), so bleed it back to
 // centre instead of letting residual bias walk the crosshair off screen.
-static const float YAW_DECAY = 0.995f;
+// Yaw has no absolute reference without a magnetometer, so it is bled back to
+// centre to stop residual gyro bias walking the crosshair off screen.
+//
+// This was 0.995, which cost 39% of the aim offset every second: hold on a
+// target near the edge and the crosshair slides out from under you, which no
+// amount of sensitivity tuning can fix. Measured with the decay disabled
+// entirely, real drift after calibration is only 0.31 deg/min, so that was a
+// severe aiming penalty bought for a quarter of a degree.
+//
+// At 0.9998 the offset loses 2% per second, which is imperceptible while
+// tracking a target, and a steady bias settles at rate * 50 rather than
+// growing without bound -- 0.26 deg at the measured drift. The catch is that
+// it now leans on calibration being good, so hold the gun still at boot.
+static const float YAW_DECAY = 0.9998f;
 // Held at a fixed number of raw counts so the deadzone tracks resolution
 // instead of silently vanishing when the full-scale range widens.
 static const float GYRO_DEADZONE = 8.0f / GYRO_LSB;

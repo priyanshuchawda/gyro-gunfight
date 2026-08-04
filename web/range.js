@@ -93,9 +93,11 @@ const store = {
 };
 
 // Degrees of yaw needed to cross the full screen width. Bigger is calmer.
-// 18 was twitchy enough that a wrist twitch crossed the whole range.
-let sensitivity = store.get("gg.sens", 40);
-let smoothing = store.get("gg.smooth", 0.35);
+// The key is versioned so a raised default reaches anyone who already tuned
+// the old one; without that they keep a stored value chosen for a twitchier
+// game and never see the change.
+let sensitivity = store.get("gg.sens2", 70);
+let smoothing = store.get("gg.smooth2", 0.45);
 let lastShots = null;
 let centred = false;
 let packets = 0;
@@ -185,10 +187,11 @@ function nextWave() {
 
 function spawnTarget() {
   const { w, h } = view();
-  // Later waves are smaller and vanish sooner.
-  const shrink = Math.max(0.45, 1 - (game.wave - 1) * 0.07);
-  const radius = (15 + Math.random() * 20) * shrink;
-  const life = Math.max(1700, 4200 - (game.wave - 1) * 260) + Math.random() * 900;
+  // Later waves are smaller and vanish sooner, but the old ramp reached
+  // 7 px targets by wave 8, which is below what the aim can reliably hold.
+  const shrink = Math.max(0.6, 1 - (game.wave - 1) * 0.05);
+  const radius = (22 + Math.random() * 24) * shrink;
+  const life = Math.max(2400, 4800 - (game.wave - 1) * 240) + Math.random() * 900;
   targets.push({
     x: radius + Math.random() * (w - radius * 2),
     y: radius + h * 0.06 + Math.random() * (h * 0.8 - radius * 2),
@@ -220,8 +223,8 @@ function fire() {
 
   // Resolve the shot before kicking, so recoil only spoils the *next* one.
   const { x, y } = aimPoint();
-  recoil.y -= 0.055;
-  recoil.x += (Math.random() - 0.5) * 0.02;
+  recoil.y -= 0.035;
+  recoil.x += (Math.random() - 0.5) * 0.014;
 
   let hitIndex = -1;
   for (let i = targets.length - 1; i >= 0; i -= 1) {
@@ -589,13 +592,13 @@ function frame() {
 ui.sens.addEventListener("input", () => {
   sensitivity = Number(ui.sens.value);
   ui.sensval.textContent = sensitivity;
-  store.set("gg.sens", sensitivity);
+  store.set("gg.sens2", sensitivity);
 });
 
 ui.smooth.addEventListener("input", () => {
   smoothing = Number(ui.smooth.value) / 100;
   ui.smoothval.textContent = smoothing.toFixed(2);
-  store.set("gg.smooth", smoothing);
+  store.set("gg.smooth2", smoothing);
 });
 
 // Reflect the stored values in the controls on load.
