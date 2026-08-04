@@ -10,7 +10,9 @@ licences attached.
 ```bash
 cd ~/game
 uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python ursina pyserial
+# numpy and pillow are only used by the self-test, which reads the rendered
+# frame back to check the projection. Without them that check silently skips.
+uv pip install --python .venv/bin/python ursina pyserial numpy pillow
 
 .venv/bin/python range3d/main.py             # live gun on /dev/ttyUSB0
 .venv/bin/python range3d/main.py --simulate  # no hardware needed
@@ -95,10 +97,24 @@ This places a target exactly where the reticle points, fires, and checks it
 was hit — at the centre and at all four corners, plus a deliberate miss so the
 corner checks cannot pass by accident.
 
-The projection from reticle position to world ray is the easy thing to get
-quietly wrong here. An aspect ratio or a factor of two out of place and the
-game still looks perfect while every shot lands a consistent distance from
-where you aimed, which is maddening to diagnose by playing.
+Those checks are not enough on their own, and it is worth understanding why.
+They place the target along `aim_ray` and then fire along `aim_ray`, so they
+agree with themselves at **any** scale factor. Exactly that happened:
+`camera.fov` in Ursina is the *horizontal* field of view, the ray maths read it
+as vertical, and every ray came out 1.89x too far from centre. Shots landed
+correctly at dead centre and drifted further from the crosshair the further out
+you aimed — and all six checks passed throughout.
+
+So the self-test now starts by putting coloured markers at known world points,
+reading the rendered frame back, and requiring the pixels to agree with
+`world_to_ui` to within 0.02 UI units. The rendered image is the only reference
+that cannot be circular. Positions are measured relative to a marker on the
+camera axis, which cancels any constant offset between window and framebuffer
+coordinates.
+
+Reintroducing the aspect-ratio bug makes that check fail by 0.24 UI units while
+all six shooting checks still pass, which is the clearest statement of what it
+is for.
 
 `--frames N --shot out.png` renders N frames and saves the window's own
 framebuffer, which is how the rendering gets checked without a person looking
