@@ -54,6 +54,7 @@ esptool --port /dev/ttyUSB0 chip-id
 | Found only when pins swapped | SDA/SCL reversed — use SDA→D2, SCL→D1 |
 | Upload fails | Close serial monitor or bridge; confirm CH340 on `ttyUSB0` |
 | Nano not listed | Need Mini‑USB data cable; won’t appear via ESP USB |
+| Tools say the board is dead but it is streaming | Another sketch may be flashed — reflash `firmware/aim-controller` |
 | Crosshair drifts | Press **R** to re-centre, or send `c` to recalibrate while still |
 | Crosshair pinned to an edge | Aim offset is stale — re-centre, or raise sensitivity |
 | One press fires twice | Raise `DEBOUNCE_MS` in the aim-controller firmware |
@@ -95,8 +96,14 @@ The visual check needs the bridge running and Chromium installed:
 pip install --user playwright && python3 -m playwright install chromium
 ```
 
-It fails on any console error, on a canvas that never draws, and on a round
-that will not start, then saves a screenshot to `/tmp/range.png`.
+It fails on any console error, on a canvas that never draws, on a round that
+will not start, and on a controller that is not actually streaming, then saves
+a screenshot to `/tmp/range.png`.
+
+That last check matters: the page plays fine from the keyboard, so a board
+running the wrong firmware looks identical to a healthy one. The check watches
+the device clock and fails if it is frozen. Use `--no-device` when you only
+want to test the page.
 
 ## Desktop screenshots on GNOME Wayland
 

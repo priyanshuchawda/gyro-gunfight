@@ -14,9 +14,39 @@ path, and saves a screenshot to look at.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+import time
+import urllib.request
 
 DEFAULT_URL = "http://127.0.0.1:8000/"
+
+
+def check_device_live(base_url: str) -> str | None:
+    """Return a complaint if the controller is not actually sending anything.
+
+    The page drives fine from the keyboard, so a dead board renders exactly
+    like a healthy one. Only the device clock proves data is arriving.
+    """
+    endpoint = base_url.rstrip("/") + "/aim"
+    try:
+        with urllib.request.urlopen(endpoint, timeout=5) as response:
+            first = json.load(response)
+        time.sleep(0.6)
+        with urllib.request.urlopen(endpoint, timeout=5) as response:
+            second = json.load(response)
+    except Exception as exc:
+        return f"could not read {endpoint}: {exc}"
+
+    if not second.get("connected"):
+        return "bridge reports the device disconnected"
+    if second.get("device_ms", 0) == first.get("device_ms", 0):
+        return (
+            "device clock is frozen at "
+            f"{second.get('device_ms')} ms - the board is not streaming "
+            "(wrong firmware flashed?)"
+        )
+    return None
 
 
 def main() -> int:
@@ -25,11 +55,21 @@ def main() -> int:
     parser.add_argument("--shot", default="/tmp/range.png")
     parser.add_argument("--width", type=int, default=1440)
     parser.add_argument("--height", type=int, default=900)
+    parser.add_argument(
+        "--no-device",
+        action="store_true",
+        help="only check the page, do not require a live controller",
+    )
     args = parser.parse_args()
 
     from playwright.sync_api import sync_playwright
 
     problems: list[str] = []
+
+    if not args.no_device:
+        complaint = check_device_live(args.url)
+        if complaint:
+            problems.append(complaint)
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -57,6 +97,8 @@ def main() -> int:
 
         link = page.text_content("#link") or ""
         rate = page.text_content("#rate") or ""
+        if not args.no_device and rate.startswith("0 "):
+            problems.append("page is receiving 0 packets per second from the bridge")
         state_before = page.evaluate("() => game.state")
 
         # Space starts the round, then fires; check the game responds.
