@@ -1,6 +1,11 @@
 # 3D range
 
-A shooting range in 3D that you aim at with the physical gun.
+A drone range in a white test chamber that you aim at with the physical gun.
+
+Quadcopters drift across the room at varying depth and you shoot them down.
+The drones are built from primitives rather than downloaded meshes: at this
+size only the silhouette reads, and it keeps the repo free of assets with
+licences attached.
 
 ```bash
 cd ~/game
