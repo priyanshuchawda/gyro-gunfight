@@ -86,6 +86,14 @@ const sandbox = {
     createElement: () => makeElement("div"),
   },
   window: { addEventListener() {}, devicePixelRatio: 1 },
+  // Real enough to exercise the persistence path rather than the fallback.
+  localStorage: (() => {
+    const data = new Map();
+    return {
+      getItem: (k) => (data.has(k) ? data.get(k) : null),
+      setItem: (k, v) => data.set(k, String(v)),
+    };
+  })(),
   performance: { now: () => now },
   requestAnimationFrame: () => {},
   setInterval: () => {},
@@ -205,6 +213,37 @@ run("fire()");
 check("trigger restarts after a round", get("game.state"), "playing");
 check("restart resets the score", get("game.score"), 0);
 check("restart refills the magazine", get("game.ammo"), 6);
+
+console.log("\naim mapping");
+// Settle the smoothing so the cursor sits exactly on target.
+function aimTo(pitch, yaw) {
+  run(`aim.pitch = ${pitch}; aim.yaw = ${yaw};`);
+  for (let i = 0; i < 400; i += 1) run("updateCursor()");
+}
+run("offset.pitch = 0; offset.yaw = 0; sensitivity = 40; smoothing = 0;");
+aimTo(0, 0);
+check("centred aim sits mid screen in x", Number(get("cursor.x").toFixed(3)), 0.5);
+check("centred aim sits mid screen in y", Number(get("cursor.y").toFixed(3)), 0.5);
+
+aimTo(0, 20);
+check("half the span reaches the screen edge", Number(get("cursor.x").toFixed(3)), 0);
+
+// Equal angles must travel equal *pixels*, not equal fractions, or aiming
+// feels faster vertically than horizontally on a wide monitor.
+aimTo(0, 10);
+const dxPixels = (0.5 - get("cursor.x")) * WIDTH;
+aimTo(10, 0);
+const dyPixels = (0.5 - get("cursor.y")) * HEIGHT;
+check(
+  "10 deg travels the same pixels either way",
+  Math.round(dxPixels),
+  Math.round(dyPixels)
+);
+
+console.log("\nsettings persistence");
+run("store.set('gg.sens', 75)");
+check("sensitivity survives a reload", get("store.get('gg.sens', 40)"), 75);
+check("an unset key falls back", get("store.get('gg.nothing', 40)"), 40);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);
