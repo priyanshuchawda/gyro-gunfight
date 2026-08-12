@@ -206,15 +206,15 @@ you cannot read a terminal while waving a gun around with both hands.
 - The trigger must hold a new level for 25 ms before it counts, which rejects
   the contact chatter that otherwise shows up as ~18 ms phantom presses.
 
-## Bridge JSON
+## Host-side state
 
-`tools/aim_bridge.py` republishes the same state as JSON on `/aim` and as a
-Server-Sent Events feed on `/stream`:
+`tools/aim_serial.py` parses each `AIM,...` line into an `AimState`:
 
-```json
-{"pitch": 12.4, "yaw": -3.1, "roll": 0.8, "trigger": 0, "shots": 7,
- "device_ms": 48120, "seq": 4812, "connected": true, "source": "/dev/ttyUSB0"}
+```python
+AimState(pitch=12.4, yaw=-3.1, roll=0.8, trigger=0, shots=7,
+         device_ms=48120, seq=4812, connected=True, source="/dev/ttyUSB0",
+         bias_ok=True)
 ```
 
-`seq` increments per update so clients can detect stalls. The bridge also
+`seq` increments per update so the game can detect stalls. The parser also
 accepts the older 6-field line and simply leaves `shots` at 0.

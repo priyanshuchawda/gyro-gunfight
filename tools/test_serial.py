@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Tests for the bridge's serial parsing, driven through a pseudo-terminal.
+"""Tests for serial aim parsing, driven through a pseudo-terminal.
 
-    python3 tools/test_bridge.py
+    python3 tools/test_serial.py
 
 os.openpty() hands back a real serial device the kernel is happy to open, so
-the bridge can be fed bytes no real board would send: half a line, a stray
+the parser can be fed bytes no real board would send: half a line, a stray
 newline mid-packet, negative angles, a field count that changed under it. That
 last one is the bug that shipped on Aug 2 and was not noticed until Aug 4.
 """
@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from aim_bridge import AimSource, read_serial  # noqa: E402
+from aim_serial import AimSource, read_serial  # noqa: E402
 
 failures = 0
 
@@ -36,7 +36,7 @@ def check(name: str, got, want) -> None:
 
 
 class FakeBoard:
-    """A pseudo-terminal the bridge reads as if it were the NodeMCU."""
+    """A pseudo-terminal the parser reads as if it were the NodeMCU."""
 
     def __init__(self) -> None:
         self.master, slave = pty.openpty()
@@ -59,7 +59,7 @@ class FakeBoard:
 
 
 def main() -> int:
-    print("bridge serial parsing, driven through a pseudo-terminal\n")
+    print("serial aim parsing, driven through a pseudo-terminal\n")
 
     board = FakeBoard()
     check("opens the port and reports connected", board.state().connected, True)
@@ -77,10 +77,6 @@ def main() -> int:
     check("still accepts the older 6 field packet", s.pitch, 1.0)
     check("6 field packet leaves the old shot count", s.shots, 7)
 
-    # Banner lines must not be parsed as telemetry, and must still reach the
-    # console: watching for "# CAL done" is how you know the gun finished
-    # calibrating. Dropping the echo is otherwise invisible, because the
-    # "AIM," guard rejects these lines anyway.
     before = board.state()
     captured = io.StringIO()
     with contextlib.redirect_stdout(captured):
@@ -89,9 +85,6 @@ def main() -> int:
     check("banner lines are echoed to the console",
           "# CAL done" in captured.getvalue(), True)
 
-    # The device can stream perfectly while running on a gyro bias it knows is
-    # wrong. That is a broken aim, not a broken link, so the game has to be
-    # able to tell them apart.
     check("bias starts out trusted", board.state().bias_ok, True)
     with contextlib.redirect_stdout(io.StringIO()):
         board.send("# CAL UNTRUSTED after 4 attempts, best wander 200.5 dps\n")
@@ -106,8 +99,6 @@ def main() -> int:
     with contextlib.redirect_stdout(io.StringIO()):
         board.send("# BIAS recovered 0.0,-5.8,-0.2 - yaw re-centred\n")
     check("recovery clears the warning", board.state().bias_ok, True)
-    # "# PEAK ..." must not be mistaken for either, or every second would
-    # flip the flag.
     with contextlib.redirect_stdout(io.StringIO()):
         board.send("# PEAK gx=2.4 gy=5.1 gz=3.8 dps clips=0\n")
     check("peak lines leave it alone", board.state().bias_ok, True)
@@ -125,8 +116,6 @@ def main() -> int:
     s = board.state()
     check("malformed packets are all ignored", (s.pitch, s.shots), (1.0, 7))
 
-    # A packet split across reads, which happens whenever the USB buffer
-    # boundary lands mid-line.
     os.write(board.master, b"AIM,4000,42.5,")
     time.sleep(0.25)
     board.send("11.0,12.0,1,99\n")
@@ -134,13 +123,11 @@ def main() -> int:
     check("reassembles a packet split mid-line", s.pitch, 42.5)
     check("reassembled packet carries its shots", s.shots, 99)
 
-    # Values the firmware genuinely produces at the extremes.
     board.send("AIM,5000,-89.99,179.10,-170.0,1,100\n")
     s = board.state()
     check("accepts a saturated yaw", s.yaw, 179.10)
     check("accepts a steep negative pitch", s.pitch, -89.99)
 
-    # seq is what the page uses to notice the stream is alive.
     a = board.state().seq
     board.send("AIM,6000,1.0,1.0,1.0,0,101\n")
     check("sequence advances on every good packet", board.state().seq > a, True)
@@ -150,7 +137,7 @@ def main() -> int:
     check("sequence does not advance on a bad packet",
           board.state().seq, b)
 
-    print(f"\n{'FAILURES' if failures else 'all bridge checks passed'}")
+    print(f"\n{'FAILURES' if failures else 'all serial checks passed'}")
     return 1 if failures else 0
 
 

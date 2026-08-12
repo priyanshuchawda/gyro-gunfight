@@ -45,7 +45,7 @@ from ursina import (  # noqa: E402
 )
 from ursina.shaders import lit_with_shadows_shader, unlit_shader  # noqa: E402
 
-from aim_bridge import AimSource, read_serial, simulate  # noqa: E402
+from aim_serial import AimSource, read_serial, simulate  # noqa: E402
 
 ROUND_SECONDS = 60
 MAG_SIZE = 6

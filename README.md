@@ -71,7 +71,7 @@ Quadcopters drift at varying depth. Shadows are the main distance cue. See [rang
 
 ```bash
 .venv/bin/python range3d/main.py --simulate --selftest
-tools/run_tests.sh    # firmware + bridge parsing + 3D projection (needs .venv)
+tools/run_tests.sh    # firmware + serial parsing + 3D projection (needs .venv)
 ```
 
 ---
@@ -106,7 +106,7 @@ Trigger button: one leg to **D5** (GPIO14), the other to **G**. The firmware use
 | [`range3d/`](range3d/) | **Main game** — 3D drone range (Ursina) |
 | [`firmware/aim-controller/`](firmware/aim-controller/) | Filtered pitch/yaw/roll + trigger over serial |
 | [`firmware/mpu-reader/`](firmware/mpu-reader/) | Raw IMU dump for bring-up |
-| [`tools/aim_bridge.py`](tools/aim_bridge.py) | Serial parser (shared with the 3D range) |
+| [`tools/aim_serial.py`](tools/aim_serial.py) | Serial aim parser (used by the 3D range) |
 | [`tools/aim_monitor.py`](tools/aim_monitor.py) | Rate, noise, and drift report |
 | [`tools/run_tests.sh`](tools/run_tests.sh) | Host-side test runner |
 | [`docs/`](docs/) | Hardware, setup, protocol, roadmap |

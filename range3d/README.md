@@ -81,11 +81,10 @@ remembering when designing anything else for this hardware.
 
 ## Why it reads the serial port directly
 
-The 2D range goes through `tools/aim_bridge.py` because a browser cannot open a
-serial port. Python can, so this imports the bridge's parser and reads the
-device itself: one less process to start and one less hop of latency. The
-parser is shared rather than copied, so the pseudo-terminal tests in
-`tools/test_bridge.py` cover this path too.
+The 3D range imports `tools/aim_serial.py` and reads the device itself: one
+less process to start and one less hop of latency. The parser is shared rather
+than copied, so the pseudo-terminal tests in `tools/test_serial.py` cover this
+path too.
 
 ## Checking it works
 

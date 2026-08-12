@@ -20,16 +20,16 @@ pio run -t upload --upload-port /dev/ttyUSB0
 pio device monitor -b 115200 --port /dev/ttyUSB0
 ```
 
-## Bridge and range
+## Run the drone range
 
 ```bash
 pip install --user pyserial
-python3 tools/aim_bridge.py --port /dev/ttyUSB0   # http://127.0.0.1:8000/
-python3 tools/aim_bridge.py --simulate            # no hardware
-python3 tools/aim_monitor.py --seconds 10         # rate / drift report
+.venv/bin/python range3d/main.py --simulate            # no hardware
+.venv/bin/python range3d/main.py --port /dev/ttyUSB0   # live gun
+python3 tools/aim_monitor.py --seconds 10              # rate / drift report
 ```
 
-Only one program can hold the serial port. Stop the bridge before flashing.
+Only one program can hold the serial port. Stop the game before flashing.
 
 ## arduino-cli (optional)
 
@@ -52,18 +52,15 @@ esptool --port /dev/ttyUSB0 chip-id
 |---------|--------|
 | `none found` on scan | VCC≈3.3 V on MPU, GND common, jumpers in **same breadboard column** as pins |
 | Found only when pins swapped | SDA/SCL reversed — use SDA→D2, SCL→D1 |
-| Upload fails | Close serial monitor or bridge; confirm CH340 on `ttyUSB0` |
+| Upload fails | Close serial monitor or the game; confirm CH340 on `ttyUSB0` |
 | Nano not listed | Need Mini‑USB data cable; won’t appear via ESP USB |
 | Tools say the board is dead but it is streaming | Another sketch may be flashed — reflash `firmware/aim-controller` |
-| Crosshair drifts | Press **R** to re-centre, or send `c` to recalibrate while still |
+| Crosshair drifts | Press **C** to re-centre, or send `c` to recalibrate while still |
 | Crosshair runs to one side, and re-centring only buys a minute | Gyro bias captured while the gun was moving. **Put the gun down on the desk** for a second — holding it steady is ~100x too noisy to count. The game says `gyro bias not trusted` when this is why |
 | Crosshair pinned to an edge | Aim offset is stale — re-centre, or raise sensitivity |
 | One press fires twice | Raise `DEBOUNCE_MS` in the aim-controller firmware |
 | Trigger never fires | Check the two button legs are **diagonal**, one to `D5`, one to `G` |
-| Range page blank | Bridge not running, or another process owns `/dev/ttyUSB0` |
-| Reload flick never fires | Flick faster — it needs ~200°/s down; magazine must not be full |
 | Aim jumps after a fast swing | Gyro clipped. Check `clips=` in the `# PEAK` lines and widen `GYRO_FS_DPS` |
-| Reload triggers while aiming | Lower the aim speed or raise `FLICK_DPS` in `web/range.js` |
 
 ## Choosing the gyro range
 
@@ -88,8 +85,7 @@ pactl set-sink-volume @DEFAULT_SINK@ 55%
 Everything that does not need hands on the gun runs from one script:
 
 ```bash
-tools/run_tests.sh        # firmware, game and bridge
-tools/run_tests.sh --all  # plus the browser and the live controller
+tools/run_tests.sh
 ```
 
 | Suite | What it covers |
@@ -97,11 +93,8 @@ tools/run_tests.sh --all  # plus the browser and the live controller
 | `test_trigger.cpp` | Debounce, driven by bounce a finger cannot produce |
 | `test_attitude.cpp` | Complementary filter, gyro bias, shake, yaw decay |
 | `test_bias.cpp` | Runtime bias tracking: bad calibration, pans, thermal drift |
-| `check_web.js` | Page and script agree on ids and classes |
-| `test_range.js` | Round flow, ammo, reload, waves, timer |
-| `test_bridge.py` | Serial parsing, through a pseudo-terminal |
+| `test_serial.py` | Serial parsing, through a pseudo-terminal |
 | `range3d --selftest` | Reticle and raycast agree, centre and all corners |
-| `visual_check.py` | Real browser renders, connects and plays |
 
 The 3D range needs a virtual environment; the runner skips that suite rather
 than failing when there isn't one. See `range3d/README.md`.
@@ -123,24 +116,9 @@ Two properties worth knowing as a player came out of this:
   taps run 50 ms and up, so this only bites if the switch is failing.
 - **Yaw compresses long turns.** See the yaw section in `PROTOCOL.md`.
 
-`test_bridge.py` needs no hardware: `os.openpty()` gives it a real serial device
+`test_serial.py` needs no hardware: `os.openpty()` gives it a real serial device
 to feed truncated lines, binary noise and the wrong field count. That last case
 is the bug that shipped on Aug 2 and went unnoticed until Aug 4.
-
-The visual check needs the bridge running and Chromium installed:
-
-```bash
-pip install --user playwright && python3 -m playwright install chromium
-```
-
-It fails on any console error, on a canvas that never draws, on a round that
-will not start, and on a controller that is not actually streaming, then saves
-a screenshot to `/tmp/range.png`.
-
-That last check matters: the page plays fine from the keyboard, so a board
-running the wrong firmware looks identical to a healthy one. The check watches
-the device clock and fails if it is frozen. Use `--no-device` when you only
-want to test the page.
 
 ## Desktop screenshots on GNOME Wayland
 
@@ -162,8 +140,8 @@ Revoke whenever you want:
 flatpak permission-set screenshot screenshot '' no
 ```
 
-Capturing the range page itself does not need any of this — `visual_check.py`
-renders the page in its own browser.
+Capturing the game window on GNOME Wayland uses the XDG portal — see
+`tools/screenshot.py`.
 
 ## Serial monitor tip
 
