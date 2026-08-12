@@ -1,6 +1,6 @@
 # Roadmap — Gyro Gunfight
 
-## Phase 0 — Kit bring‑up (done)
+## Phase 0 — Kit bring-up (done)
 - [x] Detect ESP8266 over USB
 - [x] Wire MPU on I2C
 - [x] Stream accel / gyro / temp
@@ -9,30 +9,37 @@
 ## Phase 1 — Aim controller (done)
 - [x] Calibrate gyro bias at rest
 - [x] Complementary filter → stable pitch/roll, decayed yaw
-- [x] Map aim to screen / virtual crosshair
-- [x] Deadzone + adjustable sensitivity and smoothing
-- [x] Serial → browser bridge and range demo
+- [x] Deadzone + adjustable sensitivity
+- [x] Runtime bias tracking while playing
+- [x] Reject calibration measured mid-swing
+- [x] Wire and debounce the physical trigger on `D5`
 
-## Phase 2 — Local game loop
-- [x] Hit / miss logic vs targets, score and accuracy
-- [x] Wire the physical trigger button on `D5`
-- [x] Debounce the trigger and count shots losslessly
-- [x] Recoil kick that moves the real aim point
-- [x] Target spawn waves and a round timer
-- [x] Ammo and reload gesture (flick the barrel down)
-- [ ] OLED HUD on the gun itself (ammo, HP, score)
-- [ ] Sound and hit feedback
+## Phase 2 — 3D drone range (done)
+- [x] Fixed-camera light-gun view steered by the physical gun
+- [x] Quadcopter drones at varying depth in a white test chamber
+- [x] Shadow-casting lighting for depth perception
+- [x] Hit feedback — tracers, debris, score pop, reticle ticks, tumbling kills
+- [x] Miss feedback — wall impact marks
+- [x] Direct serial input (no browser bridge hop)
+- [x] `--simulate` mode for development without hardware
+- [x] Self-test: reticle/raycast agreement + rendered pixel check
 
-## Phase 3 — Dual / arena
-- [ ] ESP8266 Wi‑Fi transport (ESP‑NOW or UDP)
+## Phase 3 — Polish
+- [ ] Round timer, waves, ammo, reload gesture (from earlier prototype)
+- [ ] OLED HUD on the gun itself (ammo, score)
+- [ ] Sound
+
+## Phase 4 — Dual / arena
+- [ ] ESP8266 Wi-Fi transport (ESP-NOW or UDP)
 - [ ] Two sticks, shared match state
 - [ ] Round timer, score sync
 
-## Phase 4 — Spectacle (optional)
+## Phase 5 — Spectacle (optional)
 - [ ] Nano + A4988 recoil / pan servo
 - [ ] LCD scoreboard
-- [ ] Sound / LED muzzle flash
+- [ ] LED muzzle flash
 
-## Non‑goals (for now)
+## Non-goals (for now)
 - Full FPS engine on the ESP
-- Mag‑based heading (module has no working AK8963)
+- Mag-based heading (module has no working AK8963)
+- Browser-based game client (superseded by `range3d/`)

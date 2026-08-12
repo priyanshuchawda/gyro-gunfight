@@ -1,65 +1,84 @@
 # Gyro Gunfight
 
-Motion-aim gunfight game built around an **ESP8266 NodeMCU** + **IMU** controller.  
-Tilt/aim with the gyro/accel stick; more peripherals (IR, OLED, stepper, Nano) are in the kit for future gameplay features.
+Motion-aim drone shooting game — point a physical **ESP8266 NodeMCU + IMU gun** at the screen and shoot down quadcopters in a 3D test chamber.
 
-**Repo:** https://github.com/priyanshuchawda/gyro-gunfight  
-*(formerly `priyanshuchawda/in`)*
+**Repo:** https://github.com/priyanshuchawda/gyro-gunfight
 
 ---
 
-## Status (2026-08-02)
+## Status (2026-08-12)
 
 | Piece | Status |
 |-------|--------|
+| 3D drone range (`range3d/`) | Working — Ursina, shadows, hit feedback, self-test |
 | NodeMCU ESP8266EX over USB (CH340 `/dev/ttyUSB0`) | Working |
 | MPU IMU on I2C `0x68` (SDA=`D2`, SCL=`D1`) | Working — accel / gyro / temp |
 | Aim firmware (calibration + complementary filter) | Working — 100 Hz, ±1000 dps, no clipping |
-| Serial → browser bridge | Working |
-| Browser range: timed rounds, waves, ammo, reload gesture | Working |
-| Hardware trigger on `D5`, debounced | Working — 7 presses, 7 shots, no double-fires |
-| Magnetometer (AK8963) | Not present / not responding on this module |
-| Arduino Nano | On breadboard — needs Mini-USB to program |
+| Runtime gyro bias tracking | Working — heals bad boot calibration while playing |
+| Mid-swing calibration rejection | Working — refuses a bias measured while moving |
+| Hardware trigger on `D5`, debounced | Working |
+| Magnetometer (AK8963) | Not present on this module |
 | OLED, I2C LCD, IR sensor, A4988 | In kit — not wired yet |
 | Networked two-player match | Not started |
 
-Measured stream from the controller:
+---
 
-```text
-# imu ok @0x68
-# CAL done bias=0.047,-5.422,-0.397 samples=400
-# gyro range +-1000 dps, 32.8 LSB/dps, deadzone 0.244 dps
-AIM,14225,65.87,-2.47,5.46,0,7
+## Quick start — play the drone range
 
-at rest over 18.7 s:  pitch -0.26°   yaw 0.00°   roll +0.10°   0 clipped samples
-all-out swing:        272 dps peak of 1000 available (3.7x headroom)
+No hardware? Skip straight to simulate mode.
+
+### 1. Install Python deps
+
+```bash
+cd ~/game
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python ursina pyserial numpy pillow
+```
+
+(`numpy` and `pillow` are only used by the self-test; the game runs without them.)
+
+### 2. Run (no gun needed)
+
+```bash
+.venv/bin/python range3d/main.py --simulate
+```
+
+### 3. Run with the physical gun
+
+Flash the aim controller, then:
+
+```bash
+cd firmware/aim-controller
+pio run -t upload --upload-port /dev/ttyUSB0
+
+cd ~/game
+.venv/bin/python range3d/main.py --port /dev/ttyUSB0
+```
+
+Hold the gun still for a second after reset — that is the gyro calibration.
+
+### Controls
+
+| Action | Gun | Keyboard |
+|--------|-----|----------|
+| Fire | Trigger on `D5` | <kbd>Space</kbd> |
+| Re-centre aim | — | <kbd>C</kbd> |
+| Quit | — | <kbd>Esc</kbd> |
+
+Quadcopters drift at varying depth. Shadows are the main distance cue. See [range3d/README.md](range3d/README.md) for lighting notes, hit feedback, and self-test details.
+
+### Verify it works
+
+```bash
+.venv/bin/python range3d/main.py --simulate --selftest
+tools/run_tests.sh    # firmware + bridge parsing + 3D projection (needs .venv)
 ```
 
 ---
 
-## Hardware kit
+## Hardware
 
-See [docs/HARDWARE.md](docs/HARDWARE.md) for the full inventory, pin map, and wiring.
-
-### Active now
-- **NodeMCU ESP8266** (ESP8266EX, 4 MB flash, MAC `8c:4f:00:4b:80:33`)
-- **MPU‑family IMU** (blue breakout, labeled like MPU‑9250; WHO_AM_I `0x75`, accel+gyro only)
-
-### Also on hand
-- Arduino Nano (Mini‑USB)
-- 0.96″ OLED, 16×2 LCD + I2C backpack
-- IR obstacle sensor
-- A4988‑style stepper driver (purple)
-- Dupont jumpers, slide switch, USB cable
-
----
-
-## Quick start — play the range
-
-### Tools
-- [PlatformIO Core](https://platformio.org/) (`pio`)
-- Python 3 with `pyserial`
-- Serial fallback: `picocom` / `minicom` @ **115200**
+See [docs/HARDWARE.md](docs/HARDWARE.md) for the full kit inventory, pin map, and wiring.
 
 ### Wire (NodeMCU ↔ MPU)
 
@@ -70,86 +89,27 @@ See [docs/HARDWARE.md](docs/HARDWARE.md) for the full inventory, pin map, and wi
 | SCL | **D1** (GPIO5) |
 | SDA | **D2** (GPIO4) |
 
-Trigger button: two **diagonal** legs, one to **D5** (GPIO14), the other to
-**G**. No resistor — the firmware uses the internal pull-up.
+Trigger button: one leg to **D5** (GPIO14), the other to **G**. The firmware uses the internal pull-up — no external resistor.
 
-### 1. Flash the aim controller
+### Tools
 
-```bash
-cd firmware/aim-controller
-pio run -t upload --upload-port /dev/ttyUSB0
-```
-
-Hold the gun still for a second after reset — that is the gyro calibration.
-
-### 2. Run the bridge and open the range
-
-```bash
-python3 tools/aim_bridge.py --port /dev/ttyUSB0
-# then open http://127.0.0.1:8000/
-```
-
-No hardware nearby? `python3 tools/aim_bridge.py --simulate`.
-
-### 3. Shoot
-
-Pull the trigger to start a 60 second round. Targets arrive in waves that get
-smaller and shorter-lived as you go, and the magazine holds six.
-
-| Action | Gun | Keyboard |
-|--------|-----|----------|
-| Fire | Trigger on `D5` | <kbd>Space</kbd> or click |
-| Reload | Flick the barrel sharply down | <kbd>R</kbd> |
-| Re-centre aim | — | <kbd>C</kbd> or the sidebar button |
-
-Aim re-centres itself when the page connects and again when a round starts, so
-whatever angle the gun is resting at does not matter.
-
-Sensitivity and smoothing are live sliders — tune them mid-round.
-
-### 4. Check stream health
-
-```bash
-python3 tools/aim_monitor.py --seconds 10
-```
-
-### Layout
-
-| Path | What |
-|------|------|
-| [`firmware/aim-controller`](firmware/aim-controller) | Filtered pitch/yaw/roll + trigger over serial |
-| [`firmware/mpu-reader`](firmware/mpu-reader) | Raw IMU dump, useful for bring-up and debugging |
-| [`tools/aim_bridge.py`](tools/aim_bridge.py) | Serial → HTTP/SSE bridge, serves the range |
-| [`tools/aim_monitor.py`](tools/aim_monitor.py) | Rate, noise, and drift report |
-| [`tools/gyro_survey.py`](tools/gyro_survey.py) | Measures real swing rates to pick the gyro range |
-| [`tools/test_range.js`](tools/test_range.js) | Headless tests for the game rules |
-| [`tools/check_web.js`](tools/check_web.js) | Static check that the page and script agree |
-| [`tools/visual_check.py`](tools/visual_check.py) | Drives the page in a real browser and screenshots it |
-| [`web/`](web) | Browser shooting range |
-
-Run the host-side tests with:
-
-```bash
-node tools/check_web.js && node tools/test_range.js   # rules, no browser
-python3 tools/visual_check.py                         # real browser, needs the bridge
-```
-
-The first two are fast and need nothing running. The visual check renders the
-page in Chromium, so it catches layout and drawing faults the rule tests are
-blind to.
+- [PlatformIO Core](https://platformio.org/) (`pio`) — flash firmware
+- Python 3 + `pyserial` — serial aim input
+- Serial debug: `picocom` / `minicom` @ **115200**
 
 ---
 
-## Project direction
+## Layout
 
-Gunfight-style game where the breadboard stick is a **motion controller**:
-
-1. **Aim** — pitch/roll (and later filtered gyro) from the MPU  
-2. **Trigger / hit** — buttons, IR, or networked events  
-3. **Feedback** — OLED / LCD HUD, sound, LEDs  
-4. **Link** — Wi‑Fi (ESP8266) for arena / dual-player
-
-Arduino Nano can stay as a co-processor later (motors, A4988, extra IO). Program it over **Mini‑USB** (not USB‑C/B); sharing a breadboard with the ESP does **not** replace Nano USB for uploads.
+| Path | What |
+|------|------|
+| [`range3d/`](range3d/) | **Main game** — 3D drone range (Ursina) |
+| [`firmware/aim-controller/`](firmware/aim-controller/) | Filtered pitch/yaw/roll + trigger over serial |
+| [`firmware/mpu-reader/`](firmware/mpu-reader/) | Raw IMU dump for bring-up |
+| [`tools/aim_bridge.py`](tools/aim_bridge.py) | Serial parser (shared with the 3D range) |
+| [`tools/aim_monitor.py`](tools/aim_monitor.py) | Rate, noise, and drift report |
+| [`tools/run_tests.sh`](tools/run_tests.sh) | Host-side test runner |
+| [`docs/`](docs/) | Hardware, setup, protocol, roadmap |
 
 ---
 
@@ -157,10 +117,11 @@ Arduino Nano can stay as a co-processor later (motors, A4988, extra IO). Program
 
 | Doc | Contents |
 |-----|----------|
-| [docs/HARDWARE.md](docs/HARDWARE.md) | Parts list, voltages, pinouts, wiring rules |
+| [range3d/README.md](range3d/README.md) | Drone game design, lighting traps, self-test |
+| [docs/HARDWARE.md](docs/HARDWARE.md) | Parts list, voltages, pinouts, wiring |
 | [docs/SETUP.md](docs/SETUP.md) | Host tools, flash, serial, troubleshooting |
-| [docs/PROTOCOL.md](docs/PROTOCOL.md) | Serial line format, commands, bridge JSON |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Game milestones |
+| [docs/PROTOCOL.md](docs/PROTOCOL.md) | Serial line format, bias tracking, commands |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones |
 
 ---
 
