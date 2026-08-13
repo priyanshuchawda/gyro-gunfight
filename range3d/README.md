@@ -1,128 +1,84 @@
 # 3D range
 
-A drone range in a white test chamber that you aim at with the physical gun.
-
-Quadcopters drift across the room at varying depth and you shoot them down.
-The drones are built from primitives rather than downloaded meshes: at this
-size only the silhouette reads, and it keeps the repo free of assets with
-licences attached.
+Spider-web drone range in a test chamber. Aim with the physical gyro gun, or
+`--simulate` with the keyboard. The game lives entirely under `range3d/` plus
+the shared serial helper in `tools/aim_serial.py` — clone the repo and run; no
+separate asset download is required.
 
 ```bash
-cd ~/game
+git clone https://github.com/priyanshuchawda/gyro-gunfight.git
+cd gyro-gunfight
 uv venv --python 3.12 .venv
-# numpy and pillow are only used by the self-test, which reads the rendered
-# frame back to check the projection. Without them that check silently skips.
 uv pip install --python .venv/bin/python ursina pyserial numpy pillow
 
-.venv/bin/python range3d/main.py             # live gun on /dev/ttyUSB0
-.venv/bin/python range3d/main.py --simulate  # no hardware needed
+.venv/bin/python range3d/main.py --simulate   # no hardware
+.venv/bin/python range3d/main.py              # live gun on /dev/ttyUSB0
 ```
 
-Space fires, `c` re-centres the aim, escape quits.
+| Key | Action |
+|-----|--------|
+| <kbd>Space</kbd> | Fire |
+| <kbd>C</kbd> | Re-centre aim |
+| <kbd>S</kbd> | Open / close **Settings** |
+| <kbd>Esc</kbd> | Close settings, or quit |
 
-## Lighting, and two traps in it
+## Settings
 
-The room is lit by one shadow-casting sun. Before that everything was flat
-colour and the drones read as stickers pasted on the wall; the shadow a drone
-throws is now the main cue for how far away it is.
+**SETTINGS** (corner button) or <kbd>S</kbd>:
 
-Two things in Ursina's lighting will waste an afternoon if you don't know them,
-and both look like the renderer is broken rather than like a setting:
+- **Theme** — Light (white chamber) or Dark (night bay)
+- **Sensitivity** — `0.50x`–`2.00x`; higher moves the reticle farther per degree
 
-- `DirectionalLight(color=...)` does nothing. `Light.__init__` takes `color` as
-  a named argument and never passes it on, so the light stays full white. Full
-  white clips this room to a flat white page, because the shader adds a flat
-  albedo term to a diffuse term and near-white surfaces cross 1.0. Assign
-  `sun.color` *after* constructing the light.
-- `lit_with_shadows_shader` defaults `shadow_color` to `rgba(0, .5, 1, .25)`
-  and subtracts it from shadowed pixels, so out of the box every shadow in the
-  room is cyan. It is set to neutral grey here.
+Prefs write to `range3d/settings.json` locally. Panel controls stay above the
+dimmer overlay so labels and buttons remain readable in **both** themes.
 
-`AmbientLight` is deliberately absent. That shader only ever reads light source
-zero, so a second light changes nothing at all; the job an ambient light would
-do is already done by the shader's flat albedo term, which is why unlit faces
-never go to black.
+## Sound
 
-The room itself — floor, back wall, side walls — is hidden from the shadow
-camera with `hide(0b0001)`. It still receives shadows, but a 16 m side wall lit
-from the left casts a slab across the entire back wall, and that reads as a
-rendering fault rather than as a shadow.
+| Event | File |
+|-------|------|
+| Fire | `sounds/shoot.mp3` (bundled) |
+| Hit wrap | `sounds/web_wrap.wav` |
 
-## Hit feedback
+Playback uses Ursina/`Audio`. If the clip or OpenAL is missing, the shot still
+registers; only the sound is skipped. Fallbacks (in order): `sounds/shoot.mp3`,
+`sounds/shoot.wav`, `../web/sounds/shoot.mp3`, `sounds/web_thwip.wav`.
 
-A light gun gives you nothing back: the muzzle never moves and there is no
-weapon on screen. All confirmation has to be built.
+## What a shot does
 
-A shot draws a tracer from below the eye, kicks the camera, and flashes a glow
-low on the screen. A hit bursts debris, floats the score up from where the
-drone was, flashes four ticks around the reticle, and tumbles the drone out of
-the sky instead of deleting it. A miss leaves a mark on whatever it hit, which
-is also the only way to tell *where* a miss went. Corner brackets appear on the
-reticle whenever a drone is under it, because at the back of the room a drone
-is only a few dozen pixels across and otherwise you cannot tell a near miss
-from a hit until the round is over.
+A strand flies from below the eye to the impact. A hit wraps the drone in a
+web, floats the score, flashes reticle ticks, and tumbles the wreck. A miss
+leaves a web splat on the wall or block. Corner brackets appear when a drone is
+under the reticle.
 
-Effects are entities on one list that gets swept each frame, rather than
-`invoke(destroy)` per effect, so nothing leaks when a round ends early.
+## Lighting traps (Ursina)
 
-## Why light-gun rather than first person
+- Assign `sun.color` **after** constructing `DirectionalLight` — the constructor
+  argument is ignored and full white clips this room.
+- Override `shadow_color`; the stock value makes every shadow cyan.
+- Hide the room shells from the shadow camera (`hide(0b0001)`) so side walls do
+  not throw a slab across the back wall.
 
-The camera does not move. The gun steers a reticle inside a fixed view, which
-is what you are physically doing when you point at a monitor.
+## Why light-gun, not FPS
 
-Turning the gun into a first-person camera would be the obvious alternative and
-it is the wrong choice here. Yaw has no magnetometer behind it, so it is
-dead-reckoned and slowly returns to centre. On a crosshair that is a minor
-nuisance you fix with `c`; on the camera itself it means the whole world
-creeping sideways while you stand still.
+The camera stays fixed; the gun steers a reticle. Yaw is dead-reckoned without a
+magnetometer — fine on a crosshair you can re-centre, disorienting if it moved
+the whole world.
 
-Pitch and roll do not have this problem — gravity anchors them — which is worth
-remembering when designing anything else for this hardware.
+## Serial
 
-## Why it reads the serial port directly
+`range3d/main.py` imports `tools/aim_serial.py` and opens the port itself (one
+less process). Shared parser means `tools/test_serial.py` covers this path too.
 
-The 3D range imports `tools/aim_serial.py` and reads the device itself: one
-less process to start and one less hop of latency. The parser is shared rather
-than copied, so the pseudo-terminal tests in `tools/test_serial.py` cover this
-path too.
-
-## Checking it works
+## Self-test
 
 ```bash
 .venv/bin/python range3d/main.py --simulate --selftest
 ```
 
-This places a target exactly where the reticle points, fires, and checks it
-was hit — at the centre and at all four corners, plus a deliberate miss so the
-corner checks cannot pass by accident.
+Places targets on the aim ray, fires, and checks hits — including a render
+read-back so projection cannot agree with itself while disagreeing with the
+screen. See the history of the aspect-ratio FOV bug in older commits for why
+that check exists.
 
-Those checks are not enough on their own, and it is worth understanding why.
-They place the target along `aim_ray` and then fire along `aim_ray`, so they
-agree with themselves at **any** scale factor. Exactly that happened:
-`camera.fov` in Ursina is the *horizontal* field of view, the ray maths read it
-as vertical, and every ray came out 1.89x too far from centre. Shots landed
-correctly at dead centre and drifted further from the crosshair the further out
-you aimed — and all six checks passed throughout.
-
-So the self-test now starts by putting coloured markers at known world points,
-reading the rendered frame back, and requiring the pixels to agree with
-`world_to_ui` to within 0.02 UI units. The rendered image is the only reference
-that cannot be circular. Positions are measured relative to a marker on the
-camera axis, which cancels any constant offset between window and framebuffer
-coordinates.
-
-Reintroducing the aspect-ratio bug makes that check fail by 0.24 UI units while
-all six shooting checks still pass, which is the clearest statement of what it
-is for.
-
-`--frames N --shot out.png` renders N frames and saves the window's own
-framebuffer, which is how the rendering gets checked without a person looking
-at it. Add `--demo` to have it play itself — it walks the reticle onto drones
-and fires, missing every fourth shot on purpose so a screenshot exercises the
-wall-impact path and not just clean kills. Without it a screenshot only ever
-catches the ready banner.
-
-Read pixels out of that screenshot rather than trusting your eye on it. The
-whole room clipping to pure white and every shadow coming out cyan both looked,
-at a glance, like deliberate art direction; sampling four pixels is what
-identified them as the two shader defaults above.
+`--frames N --shot out.png` saves the window framebuffer. Add `--demo` to auto
+aim and fire (misses every fourth shot on purpose).

@@ -62,18 +62,43 @@ SENSITIVITY_MIN = 0.5
 SENSITIVITY_MAX = 2.0
 SENSITIVITY_STEP = 0.25
 SETTINGS_PATH = Path(__file__).resolve().parent / "settings.json"
-# Primary web-shot clip (repo-relative so the absolute home path is not baked in).
-WEB_SHOOT_SFX = Path(__file__).resolve().parent.parent / "web" / "sounds" / "shoot.mp3"
+SOUNDS_DIR = Path(__file__).resolve().parent / "sounds"
+
+
+def resolve_shoot_sfx() -> Path:
+    """Prefer the bundled clip; fall back so a partial checkout still makes noise."""
+    candidates = (
+        SOUNDS_DIR / "shoot.mp3",
+        SOUNDS_DIR / "shoot.wav",
+        Path(__file__).resolve().parent.parent / "web" / "sounds" / "shoot.mp3",
+        SOUNDS_DIR / "web_thwip.wav",
+    )
+    for path in candidates:
+        if path.exists():
+            return path
+    return candidates[0]
+
+
+WEB_SHOOT_SFX = resolve_shoot_sfx()
 
 
 def play_sfx(clip, volume: float = 0.8, pitch: float = 1.0) -> None:
     """Play a one-shot. `clip` is a Path or a name under `range3d/sounds/`."""
     if not SFX_ENABLED:
         return
-    source = clip if isinstance(clip, Path) else f"sounds/{clip}"
+    if isinstance(clip, Path):
+        source = clip
+    else:
+        source = SOUNDS_DIR / f"{clip}.wav"
+        if not source.exists():
+            source = SOUNDS_DIR / f"{clip}.mp3"
     if isinstance(source, Path) and not source.exists():
         return
-    Audio(source, autoplay=True, auto_destroy=True, volume=volume, pitch=pitch)
+    try:
+        Audio(source, autoplay=True, auto_destroy=True, volume=volume, pitch=pitch)
+    except Exception:
+        # Missing OpenAL / bad clip must not kill a shot mid-frame.
+        pass
 
 
 def view_scale() -> float:
@@ -128,10 +153,11 @@ THEMES = {
         "web": color.rgba32(236, 240, 248, 230),
         "web_glow": color.rgba32(210, 220, 240, 160),
         "muzzle": color.rgba32(220, 230, 245, 120),
-        "btn": color.rgb32(48, 54, 64),
-        "btn_text": color.rgb32(236, 240, 246),
-        "panel": color.rgba32(248, 250, 252, 235),
-        "panel_line": color.rgba32(120, 130, 145, 90),
+        # High-contrast chrome on a near-white panel so options stay readable.
+        "btn": color.rgb32(28, 34, 44),
+        "btn_text": color.rgb32(255, 255, 255),
+        "panel": color.rgb32(255, 255, 255),
+        "panel_line": color.rgb32(180, 188, 200),
         "label": "DARK",
     },
     "dark": {
@@ -150,10 +176,10 @@ THEMES = {
         "web": color.rgba32(170, 220, 255, 235),
         "web_glow": color.rgba32(120, 200, 255, 190),
         "muzzle": color.rgba32(150, 210, 255, 110),
-        "btn": color.rgb32(210, 220, 232),
-        "btn_text": color.rgb32(28, 34, 44),
-        "panel": color.rgba32(28, 34, 44, 240),
-        "panel_line": color.rgba32(90, 150, 190, 100),
+        "btn": color.rgb32(236, 242, 250),
+        "btn_text": color.rgb32(18, 24, 34),
+        "panel": color.rgb32(36, 44, 56),
+        "panel_line": color.rgb32(90, 150, 190),
         "label": "LIGHT",
     },
 }
@@ -570,28 +596,38 @@ class Range3D:
         return btn
 
     def _build_settings(self) -> None:
-        """Settings gear: theme + aim sensitivity, opened from the corner."""
+        """Settings: theme + aim sensitivity, opened from the corner.
+
+        Ursina draws higher `z` on top. The dimmer must sit *behind* the panel
+        and controls — otherwise it washes out dark buttons on light mode while
+        light buttons on dark mode still peek through.
+        """
         self.settings_btn = self._make_settings_btn(
             camera.ui, "SETTINGS", (0.78, -0.44), (0.18, 0.055),
             self.toggle_settings,
         )
 
-        self.settings_panel = Entity(parent=camera.ui, enabled=False, z=-0.1)
+        self.settings_panel = Entity(parent=camera.ui, enabled=False, z=-0.2)
+        # Behind the card.
         self.settings_dim = Entity(
             parent=self.settings_panel, model="quad", scale=(3.2, 2.0),
-            color=color.rgba32(8, 10, 14, 140), z=0.02, collider="box",
+            color=color.rgba32(8, 10, 14, 150), z=-0.04, collider="box",
+        )
+        self.settings_frame = Entity(
+            parent=self.settings_panel, model="quad", scale=(0.76, 0.62),
+            color=THEMES["light"]["panel_line"], z=-0.02,
         )
         self.settings_bg = Entity(
             parent=self.settings_panel, model="quad", scale=(0.72, 0.58),
-            color=THEMES["light"]["panel"], z=0.01,
+            color=THEMES["light"]["panel"], z=-0.01,
         )
         self.settings_title = Text(
             parent=self.settings_panel, text="SETTINGS", origin=(0, 0),
-            position=(0, 0.20), scale=1.3, color=THEMES["light"]["ink"],
+            position=(0, 0.20, 0), scale=1.3, color=THEMES["light"]["ink"],
         )
         self.settings_theme_label = Text(
             parent=self.settings_panel, text="Theme", origin=(-0.5, 0),
-            position=(-0.28, 0.08), scale=0.9, color=THEMES["light"]["faint"],
+            position=(-0.28, 0.08, 0), scale=0.9, color=THEMES["light"]["faint"],
         )
         self.theme_toggle_btn = self._make_settings_btn(
             self.settings_panel, "LIGHT", (0.16, 0.08), (0.22, 0.055),
@@ -599,11 +635,11 @@ class Range3D:
         )
         self.settings_sens_label = Text(
             parent=self.settings_panel, text="Sensitivity", origin=(-0.5, 0),
-            position=(-0.28, -0.02), scale=0.9, color=THEMES["light"]["faint"],
+            position=(-0.28, -0.02, 0), scale=0.9, color=THEMES["light"]["faint"],
         )
         self.sens_value = Text(
             parent=self.settings_panel, text="1.00x", origin=(0, 0),
-            position=(0.16, -0.02), scale=1.0, color=THEMES["light"]["ink"],
+            position=(0.16, -0.02, 0), scale=1.0, color=THEMES["light"]["ink"],
         )
         self.sens_down_btn = self._make_settings_btn(
             self.settings_panel, "-", (0.0, -0.12), (0.08, 0.055),
@@ -616,13 +652,17 @@ class Range3D:
         self.settings_hint = Text(
             parent=self.settings_panel,
             text="Higher = faster reticle   [s] toggle  [esc] close",
-            origin=(0, 0), position=(0, -0.22), scale=0.65,
+            origin=(0, 0), position=(0, -0.22, 0), scale=0.65,
             color=THEMES["light"]["faint"],
         )
         self.settings_close_btn = self._make_settings_btn(
             self.settings_panel, "CLOSE", (0, -0.32), (0.2, 0.055),
             self.close_settings,
         )
+        # Force controls above the card fill.
+        for btn in (self.theme_toggle_btn, self.sens_down_btn, self.sens_up_btn,
+                    self.settings_close_btn):
+            btn.z = 0.01
         self._settings_chrome = (
             self.settings_btn, self.theme_toggle_btn, self.sens_down_btn,
             self.sens_up_btn, self.settings_close_btn,
@@ -718,6 +758,7 @@ class Range3D:
         self.banner_sub.color = theme["faint"]
 
         self.settings_bg.color = theme["panel"]
+        self.settings_frame.color = theme["panel_line"]
         for label in self._settings_labels:
             if label is self.settings_theme_label or label is self.settings_sens_label \
                     or label is self.settings_hint:
@@ -727,6 +768,8 @@ class Range3D:
         for btn in self._settings_chrome:
             btn.color = theme["btn"]
             btn.text_color = theme["btn_text"]
+            if hasattr(btn, "text_entity") and btn.text_entity:
+                btn.text_entity.color = theme["btn_text"]
         # Keep the idle muzzle colour in sync; flash still clears to alpha 0.
         self._muzzle_flash = theme["muzzle"]
 

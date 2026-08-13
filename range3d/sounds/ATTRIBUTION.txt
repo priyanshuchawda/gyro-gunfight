@@ -1,3 +1,6 @@
+shoot.mp3
+  Bundled web-shot SFX used by the 3D range (also mirrored under web/sounds/).
+
 web_thwip.wav / web_wrap.wav
-  Original synthesized Spidey-style web-shooter SFX for this project
+  Original synthesized Spidey-style fallback / hit-wrap SFX for this project
   (not ripped from Marvel media). Generated procedurally in-repo.
