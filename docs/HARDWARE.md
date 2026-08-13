@@ -36,12 +36,12 @@ Useful pins for this project:
 
 | GPIO | Role |
 |------|------|
-| 21 | I2C SDA (MPU) |
-| 22 | I2C SCL (MPU) |
+| 21 | I2C SDA (**MPU-6050**) |
+| 22 | I2C SCL (**MPU-6050**) |
 | 27 | Trigger button to GND |
 | 26 | Coin vibrator drive (via NPN/MOSFET — not direct) |
 
-See that firmware README for the vibrator transistor circuit.
+Expect `WHO_AM_I = 0x68` at I2C `0x68` (AD0 low). Not MPU-6500 (`0x70`).
 
 ### Arduino Nano (on breadboard, not required yet)
 | Field | Value |
@@ -61,7 +61,7 @@ Breadboard alone does **not** give upload access. Use Mini‑USB, USB‑TTL on R
 
 | Module | Interface | Notes | Wired? |
 |--------|-----------|-------|--------|
-| Blue IMU (MPU‑family) | I2C `0x68` | WHO_AM_I `0x75` (clone). Accel + gyro + temp. No AK8963 mag. | **Yes** → ESP |
+| Blue IMU (**MPU-6050** on BLE stick) | I2C `0x68` | `WHO_AM_I` `0x68`. Accel + gyro + temp. No mag. | **Yes** → ESP32 |
 | 0.96″ OLED | I2C (usually `0x3C`) | HUD candidate | No |
 | 16×2 LCD + I2C backpack | I2C | Alternate HUD | No |
 | IR obstacle sensor | Digital (+ pot) | Trigger / hit detect | No |

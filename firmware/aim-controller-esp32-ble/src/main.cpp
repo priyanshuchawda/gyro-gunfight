@@ -27,8 +27,13 @@ static const char *BLE_NAME = "GyroGun";
 #define NUS_CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 #define NUS_CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
-static const uint8_t MPU_ADDR = 0x68;
-static const float ACC_LSB = 16384.0f;
+static const uint8_t MPU_ADDR = 0x68;       // AD0 low; use 0x69 if AD0 is tied high
+static const uint8_t MPU_WHO_AM_I_REG = 0x75;
+static const uint8_t MPU6050_WHO_AM_I = 0x68;
+// MPU-6050 temp: °C = TEMP_OUT/340 + 36.53 (not the 6500/9250 constants).
+static const float MPU6050_TEMP_SENS = 340.0f;
+static const float MPU6050_TEMP_OFFSET = 36.53f;
+static const float ACC_LSB = 16384.0f;      // ±2 g
 
 #define GYRO_FS_DPS 1000
 
@@ -165,7 +170,7 @@ static bool readImu(Vec3 &acc, Vec3 &rot, float &temp_c) {
   acc.x = be16(raw[0], raw[1]) / ACC_LSB;
   acc.y = be16(raw[2], raw[3]) / ACC_LSB;
   acc.z = be16(raw[4], raw[5]) / ACC_LSB;
-  temp_c = be16(raw[6], raw[7]) / 333.87f + 21.0f;
+  temp_c = be16(raw[6], raw[7]) / MPU6050_TEMP_SENS + MPU6050_TEMP_OFFSET;
 
   int16_t rx = be16(raw[8], raw[9]);
   int16_t ry = be16(raw[10], raw[11]);
@@ -181,19 +186,37 @@ static bool readImu(Vec3 &acc, Vec3 &rot, float &temp_c) {
   return true;
 }
 
+static bool readWhoAmI(uint8_t &who) {
+  return readBytes(MPU_WHO_AM_I_REG, &who, 1);
+}
+
 static bool imuBegin() {
-  writeReg(0x6B, 0x80);
+  // MPU-6050 bring-up (InvenSense register map). Same FS/DLPF addresses as
+  // the 6500 family, but WHO_AM_I and temperature scale differ.
+  writeReg(0x6B, 0x80);  // device reset
   delay(100);
-  writeReg(0x6B, 0x00);
+  writeReg(0x6B, 0x00);  // wake
   delay(50);
-  writeReg(0x6B, 0x01);
-  writeReg(0x1A, 0x03);
-  writeReg(0x19, 0x00);
+  writeReg(0x6B, 0x01);  // PLL with X gyro clock (stable on 6050)
+  writeReg(0x1A, 0x03);  // DLPF ~44 Hz
+  writeReg(0x19, 0x00);  // sample divider → 1 kHz
   writeReg(0x1B, GYRO_FS_SEL);
-  writeReg(0x1C, 0x00);
+  writeReg(0x1C, 0x00);  // accel ±2 g
   delay(50);
-  Wire.beginTransmission(MPU_ADDR);
-  return Wire.endTransmission() == 0;
+
+  uint8_t who = 0;
+  if (!readWhoAmI(who)) return false;
+  if (who == MPU6050_WHO_AM_I) {
+    emitf("# imu WHO_AM_I=0x%02X => MPU-6050 @0x%02X", who, MPU_ADDR);
+  } else if (who == 0x70 || who == 0x71 || who == 0x73) {
+    // Still usable for aim (same gyro/accel regs); warn so wiring is clear.
+    emitf("# imu WHO_AM_I=0x%02X (not MPU-6050) @0x%02X — continuing", who,
+          MPU_ADDR);
+  } else {
+    emitf("# imu WHO_AM_I=0x%02X unexpected @0x%02X — check wiring/AD0", who,
+          MPU_ADDR);
+  }
+  return true;
 }
 
 static const float CAL_MAX_WANDER = 3.0f;
@@ -312,9 +335,9 @@ void setup() {
   Serial.printf("# BLE advertising as %s (NUS)\n", BLE_NAME);
 
   if (!imuBegin()) {
-    emitLine("# ERROR imu not responding at 0x68");
+    emitLine("# ERROR MPU-6050 not responding at 0x68 (check SDA=21 SCL=22)");
   } else {
-    emitLine("# imu ok @0x68");
+    emitLine("# MPU-6050 ready");
     calibrate();
   }
   emitf("# gyro range +-%d dps, %.1f LSB/dps, deadzone %.3f dps", GYRO_FS_DPS,

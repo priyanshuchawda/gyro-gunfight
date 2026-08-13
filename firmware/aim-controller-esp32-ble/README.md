@@ -9,15 +9,19 @@ Includes a **phone-style coin vibrator** for fire/hit haptic feedback.
 
 ## Wiring (ESP32 DevKit)
 
-### IMU + trigger
+### IMU + trigger (MPU-6050)
 
 | Part | ESP32 DevKit |
 |------|--------------|
-| MPU VCC | **3V3** |
-| MPU GND | **GND** |
-| MPU SCL | **GPIO22** |
-| MPU SDA | **GPIO21** |
+| MPU-6050 VCC | **3V3** |
+| MPU-6050 GND | **GND** |
+| MPU-6050 SCL | **GPIO22** |
+| MPU-6050 SDA | **GPIO21** |
+| MPU-6050 AD0 | **GND** (I2C address `0x68`; tie to 3V3 for `0x69`) |
 | Trigger button | **GPIO27** → **GND** (internal pull-up) |
+
+Firmware expects **MPU-6050** (`WHO_AM_I == 0x68`). Accel/gyro FS and DLPF
+match the 6050 register map; temperature uses the 6050 scale.
 
 ### Coin vibrator (pancake / mobile vibe motor)
 

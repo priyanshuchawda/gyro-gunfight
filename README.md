@@ -39,7 +39,7 @@ Settings: theme (light/dark) + aim sensitivity. Sound is bundled under
 
 | Part | ESP32 DevKit |
 |------|--------------|
-| MPU VCC / GND / SCL / SDA | **3V3 / GND / GPIO22 / GPIO21** |
+| MPU-6050 VCC / GND / SCL / SDA | **3V3 / GND / GPIO22 / GPIO21** (AD0→GND → `0x68`) |
 | Trigger | **GPIO27** → GND |
 | Coin vibrator | **GPIO26** via NPN/MOSFET (see firmware README) |
 
