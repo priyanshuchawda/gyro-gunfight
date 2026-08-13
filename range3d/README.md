@@ -32,6 +32,9 @@ uv pip install --python .venv/bin/python ursina pyserial numpy pillow
 Prefs write to `range3d/settings.json` locally. Panel controls stay above the
 dimmer overlay so labels and buttons remain readable in **both** themes.
 
+On the `esp32-bluetooth` branch, fire/hit also pulse a coin vibrator on the
+ESP32 DevKit stick when running with `--ble` (see the firmware README).
+
 ## Sound
 
 | Event | File |

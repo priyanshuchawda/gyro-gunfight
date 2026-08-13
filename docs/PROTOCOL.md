@@ -17,7 +17,7 @@ AIM,<device_ms>,<pitch>,<yaw>,<roll>,<trigger>,<shots>
 | `pitch` | float° | Nose up/down, fused accel + gyro |
 | `yaw` | float° | Left/right, gyro-integrated and re-centred over time |
 | `roll` | float° | Barrel twist, fused accel + gyro |
-| `trigger` | 0/1 | Debounced `D5` (GPIO14) level |
+| `trigger` | 0/1 | Debounced trigger level (NodeMCU `D5` / ESP32 `GPIO27`) |
 | `shots` | int | Debounced presses since boot, monotonic |
 
 Count shots from the **delta of `shots`**, not from a `0 -> 1` edge on
@@ -74,6 +74,11 @@ so the bias is now tracked continuously while you play; see
 |------|--------|
 | `c` | Re-run gyro bias calibration — hold the gun still |
 | `z` | Zero the yaw axis |
+| `v` | Short coin-vibrator pulse (fire feel) — ESP32 BLE stick |
+| `h` | Longer coin-vibrator pulse (hit feel) — ESP32 BLE stick |
+
+On the ESP32 DevKit firmware the stick also buzzes locally whenever `shots`
+increments, so a trigger pull still feels tactile with no game connected.
 
 ## Runtime bias tracking
 

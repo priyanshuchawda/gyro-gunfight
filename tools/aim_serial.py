@@ -37,6 +37,7 @@ class AimSource:
     def __init__(self) -> None:
         self._state = AimState()
         self._lock = threading.Lock()
+        self._outbound: list[str] = []
 
     def set(self, **fields) -> None:
         with self._lock:
@@ -47,6 +48,24 @@ class AimSource:
     def snapshot(self) -> AimState:
         with self._lock:
             return AimState(**asdict(self._state))
+
+    def queue_command(self, command: str) -> None:
+        """Queue a short host→device command (`c`, `z`, `v`, `h`, …)."""
+        if not command:
+            return
+        with self._lock:
+            self._outbound.append(command)
+
+    def drain_commands(self) -> list[str]:
+        with self._lock:
+            pending, self._outbound = self._outbound, []
+            return pending
+
+    def vibrate_fire(self) -> None:
+        self.queue_command("v")
+
+    def vibrate_hit(self) -> None:
+        self.queue_command("h")
 
 
 def parse_aim_line(raw: str) -> dict | None:

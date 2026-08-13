@@ -1,30 +1,45 @@
 # Aim controller — ESP32 DevKit (Bluetooth LE)
 
-Wireless drop-in for the wired NodeMCU aim stick. Same `AIM,...` protocol,
-same attitude / bias / trigger code — streamed over **BLE Nordic UART**
-instead of USB serial wires.
+Wireless aim stick for Gyro Gunfight. Same `AIM,...` protocol as the wired
+NodeMCU build, streamed over **BLE Nordic UART** (advertises as **`GyroGun`**).
+Includes a **phone-style coin vibrator** for fire/hit haptic feedback.
 
-Advertises as **`GyroGun`**.
-
-> This lives on the `esp32-bluetooth` branch. `main` still uses the USB
-> NodeMCU firmware under `firmware/aim-controller/`.
+> Branch: `esp32-bluetooth`. `main` still uses USB NodeMCU under
+> `firmware/aim-controller/`.
 
 ## Wiring (ESP32 DevKit)
 
-| MPU | ESP32 DevKit |
-|-----|--------------|
-| VCC | **3V3** |
-| GND | **GND** |
-| SCL | **GPIO22** |
-| SDA | **GPIO21** |
+### IMU + trigger
 
-| Trigger | ESP32 DevKit |
-|---------|--------------|
-| Leg A | **GPIO27** |
-| Leg B | **GND** |
+| Part | ESP32 DevKit |
+|------|--------------|
+| MPU VCC | **3V3** |
+| MPU GND | **GND** |
+| MPU SCL | **GPIO22** |
+| MPU SDA | **GPIO21** |
+| Trigger button | **GPIO27** → **GND** (internal pull-up) |
 
-Power the board from USB only while flashing; once flashed, USB is optional
-(debug mirror). Aim telemetry goes over Bluetooth.
+### Coin vibrator (pancake / mobile vibe motor)
+
+Do **not** drive the motor straight from a GPIO — it draws more current than
+the pin can safely supply. Use a small NPN (2N2222 / S8050) or N-MOSFET:
+
+```
+ESP32 GPIO26 ── 1 kΩ ──► NPN base
+NPN emitter ────────────► GND
+NPN collector ──────────► vibrator −
+vibrator + ─────────────► 3V3
+diode (1N4148) across motor, cathode to 3V3 (flyback)
+```
+
+| Part | Pin |
+|------|-----|
+| Vibe drive (transistor base via 1 kΩ) | **GPIO26** |
+| Motor + | **3V3** |
+| Motor − | transistor collector |
+| Common | **GND** |
+
+On boot the firmware pulses the motor once so you can confirm the wiring.
 
 ## Flash
 
@@ -34,30 +49,36 @@ pio run -t upload --upload-port /dev/ttyUSB0   # or ttyACM0
 pio device monitor -b 115200
 ```
 
-Hold the gun still for calibration after boot (same as the wired stick).
+Hold the gun still for calibration after reset.
 
 ## Play
 
 ```bash
-# once
 uv pip install --python .venv/bin/python bleak
-
 .venv/bin/python range3d/main.py --ble
-# or pin a MAC after the first scan:
-.venv/bin/python range3d/main.py --ble --ble-address AA:BB:CC:DD:EE:FF
+# optional: .venv/bin/python range3d/main.py --ble --ble-address AA:BB:CC:DD:EE:FF
 ```
 
-Linux tip: your user needs Bluetooth access (`bluetooth` group / BlueZ).
+Linux: your user needs Bluetooth access (BlueZ / `bluetooth` group).
+
+### What buzzes when
+
+| Event | Source | Feel |
+|-------|--------|------|
+| Boot | firmware | short chirp |
+| Trigger pull | firmware (`shots++`) | short fire pulse |
+| Shot from game | host sends `v` | short fire pulse |
+| Enemy hit | host sends `h` | longer hit pulse |
 
 ## Protocol
 
-Identical to [docs/PROTOCOL.md](../../docs/PROTOCOL.md):
+Same as [docs/PROTOCOL.md](../../docs/PROTOCOL.md):
 
 ```
 AIM,<ms>,<pitch>,<yaw>,<roll>,<trigger>,<shots>
 ```
 
-Host → device (BLE RX write or USB): `c` recalibrate, `z` zero yaw.
+Host → device (BLE write or USB): `c` calibrate, `z` zero yaw, `v` fire vibe,
+`h` hit vibe.
 
-USB serial still prints every sample for debugging; BLE notifies ~100 Hz when
-a client is connected.
+USB serial still mirrors every AIM line for debugging.

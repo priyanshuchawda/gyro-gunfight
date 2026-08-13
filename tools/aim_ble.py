@@ -2,9 +2,9 @@
 """Read the ESP32 DevKit aim stream over Bluetooth Low Energy (NUS).
 
 Same `AIM,...` lines as USB serial. The board advertises as `GyroGun` and
-exposes the Nordic UART Service.
+exposes the Nordic UART Service. Host→device writes carry calibrate / haptic
+bytes (`c`, `z`, `v`, `h`).
 
-    .venv/bin/python -c "from aim_ble import read_ble"
     .venv/bin/python range3d/main.py --ble
 """
 
@@ -16,8 +16,6 @@ import time
 
 from aim_serial import AimSource, apply_device_line, parse_aim_line
 
-# Nordic UART Service (same UUIDs the ESP32 firmware uses).
-NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # notify: device → host
 NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"  # write: host → device
 DEFAULT_NAME = "GyroGun"
@@ -62,31 +60,13 @@ async def _session(source: AimSource, name: str,
     def on_notify(_handle: int, data: bytearray) -> None:
         nonlocal buffer
         buffer += data.decode("utf-8", errors="replace")
-        while True:
-            # Firmware sends lines without '\\n' on notify; USB uses println.
-            # Accept both: split on newlines, or take a full AIM,/\# chunk.
-            if "\n" in buffer or "\r" in buffer:
-                raw, sep, rest = buffer.partition("\n")
-                if not sep:
-                    raw, sep, rest = buffer.partition("\r")
-                buffer = rest.lstrip("\r\n")
-                line = raw.strip()
+        while "\n" in buffer or "\r" in buffer:
+            if "\n" in buffer:
+                raw, _, buffer = buffer.partition("\n")
             else:
-                # NUS notify often arrives as one complete line without CR/LF.
-                stripped = buffer.strip()
-                if stripped.startswith("AIM,") or stripped.startswith("#"):
-                    # Wait until we likely have a full line (comma count / idle).
-                    if stripped.startswith("AIM,") and stripped.count(",") >= 6:
-                        line = stripped
-                        buffer = ""
-                    elif stripped.startswith("#") and len(stripped) > 3:
-                        # Comment lines vary; flush if no more data pending soon.
-                        line = stripped
-                        buffer = ""
-                    else:
-                        break
-                else:
-                    break
+                raw, _, buffer = buffer.partition("\r")
+            buffer = buffer.lstrip("\r\n")
+            line = raw.strip()
             if not line:
                 continue
             if line.startswith("#"):
@@ -104,7 +84,14 @@ async def _session(source: AimSource, name: str,
         await client.start_notify(NUS_TX, on_notify)
         try:
             while client.is_connected:
-                await asyncio.sleep(0.5)
+                for command in source.drain_commands():
+                    try:
+                        await client.write_gatt_char(
+                            NUS_RX, command.encode("ascii"), response=False,
+                        )
+                    except Exception as exc:
+                        print(f"[ble] write failed: {exc}")
+                await asyncio.sleep(0.02)
         finally:
             try:
                 await client.stop_notify(NUS_TX)

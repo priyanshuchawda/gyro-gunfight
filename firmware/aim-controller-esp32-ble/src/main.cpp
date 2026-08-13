@@ -15,6 +15,10 @@
 static const int PIN_SDA = 21;
 static const int PIN_SCL = 22;
 static const int PIN_TRIGGER = 27;  // button to GND, INPUT_PULLUP
+// Coin (pancake) vibrator via NPN/MOSFET — see README. Active HIGH.
+static const int PIN_VIBE = 26;
+static const uint32_t VIBE_FIRE_MS = 45;
+static const uint32_t VIBE_HIT_MS = 140;
 
 static const char *BLE_NAME = "GyroGun";
 
@@ -69,6 +73,8 @@ static uint32_t gyro_clips = 0;
 static Vec3 gyro_peak = {0, 0, 0};
 static uint32_t peak_report_ms = 0;
 static volatile bool request_calibrate = false;
+static uint32_t vibe_until_ms = 0;
+static uint32_t last_shot_count = 0;
 
 static BLEServer *ble_server = nullptr;
 static BLECharacteristic *ble_tx = nullptr;
@@ -90,12 +96,30 @@ static void emitf(const char *fmt, ...) {
   emitLine(line_buf);
 }
 
+static void buzz(uint32_t ms) {
+  if (ms == 0) return;
+  digitalWrite(PIN_VIBE, HIGH);
+  uint32_t until = millis() + ms;
+  // Keep the longest pending pulse if one is already running.
+  if (until > vibe_until_ms) vibe_until_ms = until;
+}
+
+static void pollVibe() {
+  if (vibe_until_ms != 0 && (int32_t)(millis() - vibe_until_ms) >= 0) {
+    digitalWrite(PIN_VIBE, LOW);
+    vibe_until_ms = 0;
+  }
+}
+
 static void handleHostCommand(char c) {
   if (c == 'c' || c == 'C') request_calibrate = true;
   if (c == 'z' || c == 'Z') {
     attitude.zeroYaw();
     emitLine("# yaw zeroed");
   }
+  // Phone-style coin vibrator pulses from the game.
+  if (c == 'v') buzz(VIBE_FIRE_MS);
+  if (c == 'h') buzz(VIBE_HIT_MS);
 }
 
 class ServerCallbacks : public BLEServerCallbacks {
@@ -276,6 +300,8 @@ void setup() {
   Serial.begin(115200);
   delay(400);
   pinMode(PIN_TRIGGER, INPUT_PULLUP);
+  pinMode(PIN_VIBE, OUTPUT);
+  digitalWrite(PIN_VIBE, LOW);
 
   Wire.begin(PIN_SDA, PIN_SCL);
   Wire.setClock(400000);
@@ -295,6 +321,8 @@ void setup() {
         GYRO_LSB, GYRO_DEADZONE);
   emitLine("# fields: AIM,ms,pitch,yaw,roll,trigger,shots");
   emitLine("# transport: BLE UART (USB serial mirrored for debug)");
+  emitLine("# haptics: coin vibe on GPIO26 — host 'v'=fire 'h'=hit");
+  buzz(80);  // boot chirp so wiring is obvious
 }
 
 static void reportPeaks(const Vec3 &rot) {
@@ -320,6 +348,12 @@ void loop() {
   }
 
   pollTrigger();
+  pollVibe();
+  // Local fire haptic even if the PC never answers (miss / no BLE client).
+  if (trigger.shots() != last_shot_count) {
+    last_shot_count = trigger.shots();
+    buzz(VIBE_FIRE_MS);
+  }
 
   uint32_t now = micros();
   if ((uint32_t)(now - last_us) < SAMPLE_US) return;

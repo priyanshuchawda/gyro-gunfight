@@ -882,6 +882,7 @@ class Range3D:
         invoke(setattr, self.muzzle_light, "color", clear, delay=0.06)
         self.shake = 0.06
         play_sfx(WEB_SHOOT_SFX, volume=0.85, pitch=random.uniform(0.94, 1.08))
+        self.source.vibrate_fire()
 
         direction = self.aim_ray()
         hit = raycast(camera.world_position, direction, distance=60, debug=False)
@@ -906,6 +907,7 @@ class Range3D:
         self.score += points
         self.effects.wrap(Vec3(target.world_position), target.scale_x)
         play_sfx("web_wrap", volume=0.7, pitch=random.uniform(0.95, 1.06))
+        self.source.vibrate_hit()
         self.popup(target.world_position, points)
         self.hitmark.enabled = True
         self.hitmark_scale = 1.5
