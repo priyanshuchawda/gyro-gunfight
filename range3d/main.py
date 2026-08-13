@@ -55,16 +55,19 @@ RELOAD_S = 0.9
 AIM_SPAN = 70.0
 SMOOTHING = 0.45
 TARGET_COUNT = 5
-# Original synthesized Spidey-style thwip / wrap (see range3d/sounds/).
 SFX_ENABLED = True
+# Primary web-shot clip (repo-relative so the absolute home path is not baked in).
+WEB_SHOOT_SFX = Path(__file__).resolve().parent.parent / "web" / "sounds" / "shoot.mp3"
 
 
-def play_sfx(name: str, volume: float = 0.8, pitch: float = 1.0) -> None:
-    """Play a one-shot from `range3d/sounds/`. No-op if muted or missing."""
+def play_sfx(clip, volume: float = 0.8, pitch: float = 1.0) -> None:
+    """Play a one-shot. `clip` is a Path or a name under `range3d/sounds/`."""
     if not SFX_ENABLED:
         return
-    Audio(f"sounds/{name}", autoplay=True, auto_destroy=True,
-          volume=volume, pitch=pitch)
+    source = clip if isinstance(clip, Path) else f"sounds/{clip}"
+    if isinstance(source, Path) and not source.exists():
+        return
+    Audio(source, autoplay=True, auto_destroy=True, volume=volume, pitch=pitch)
 
 
 def view_scale() -> float:
@@ -596,7 +599,7 @@ class Range3D:
         invoke(setattr, self.muzzle_light, "color", color.rgba32(220, 230, 245, 0),
                delay=0.06)
         self.shake = 0.06
-        play_sfx("web_thwip", volume=0.85, pitch=random.uniform(0.94, 1.08))
+        play_sfx(WEB_SHOOT_SFX, volume=0.85, pitch=random.uniform(0.94, 1.08))
 
         direction = self.aim_ray()
         hit = raycast(camera.world_position, direction, distance=60, debug=False)
