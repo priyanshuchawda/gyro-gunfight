@@ -1,112 +1,87 @@
-# Gyro Gunfight
+# Gyro Gunfight (`esp32-bluetooth` branch)
 
-Point a physical **ESP8266 + IMU gun** at the screen and shoot spider webs at drones in a 3D test chamber. No gun? Keyboard simulate mode works too.
+Point a physical **ESP32 DevKit + IMU gun** at the screen over **Bluetooth LE**
+(no aim wires to the PC). Wired NodeMCU serial still works on `main`.
 
-**Repo:** https://github.com/priyanshuchawda/gyro-gunfight
+**Repo:** https://github.com/priyanshuchawda/gyro-gunfight  
+**Branch:** `esp32-bluetooth`
 
 ---
 
 ## Play in 3 steps (no hardware)
 
-You only need a clone of this repo and Python 3.12+. You do **not** need extra asset packs or a separate “game directory”.
-
 ```bash
 git clone https://github.com/priyanshuchawda/gyro-gunfight.git
 cd gyro-gunfight
+git checkout esp32-bluetooth
 
-# once
 uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python ursina pyserial numpy pillow
+uv pip install --python .venv/bin/python ursina pyserial numpy pillow bleak
 
-# play
 .venv/bin/python range3d/main.py --simulate
 ```
 
-(`numpy` / `pillow` are only for the self-test; the game runs without them.)
-
 ### Controls
 
-| Action | Keyboard | Physical gun |
-|--------|----------|--------------|
-| Fire web | <kbd>Space</kbd> | Trigger on `D5` |
-| Re-centre aim | <kbd>C</kbd> | — |
-| Settings | <kbd>S</kbd> or **SETTINGS** button | — |
-| Quit / close settings | <kbd>Esc</kbd> | — |
-
-### Settings
-
-Open **SETTINGS** (bottom-right) or press <kbd>S</kbd>:
-
-- **Theme** — Light or Dark (options stay readable in both)
-- **Sensitivity** — `0.50x` … `2.00x` (higher = faster reticle)
-
-Choices are saved to `range3d/settings.json` on your machine (not committed).
-
-### Sound
-
-Fire plays `range3d/sounds/shoot.mp3` (bundled with the game). Hits play `web_wrap.wav`. If OpenAL / audio is unavailable, shots still work — only the SFX is skipped.
+| Action | Keyboard | Gun |
+|--------|----------|-----|
+| Fire web | <kbd>Space</kbd> | Trigger (GPIO27) |
+| Re-centre | <kbd>C</kbd> | — |
+| Settings | <kbd>S</kbd> | — |
+| Quit | <kbd>Esc</kbd> | — |
 
 ---
 
-## Play with the physical gun
+## ESP32 DevKit over Bluetooth
+
+### Wire the stick
+
+| MPU | ESP32 DevKit |
+|-----|--------------|
+| VCC | **3V3** |
+| GND | **GND** |
+| SCL | **GPIO22** |
+| SDA | **GPIO21** |
+| Trigger | **GPIO27** → GND |
+
+### Flash firmware
 
 ```bash
-cd firmware/aim-controller
+cd firmware/aim-controller-esp32-ble
 pio run -t upload --upload-port /dev/ttyUSB0
+```
 
-cd ../..
+Board advertises as **`GyroGun`** (Nordic UART BLE service).
+
+### Run the game
+
+```bash
+.venv/bin/python range3d/main.py --ble
+```
+
+Hold still one second after power-on for gyro calibration.
+
+Details: [firmware/aim-controller-esp32-ble/README.md](firmware/aim-controller-esp32-ble/README.md)
+
+### Still want USB serial?
+
+```bash
 .venv/bin/python range3d/main.py --port /dev/ttyUSB0
 ```
 
-Hold the gun still for a second after reset (gyro calibration).
-
-### Wire (NodeMCU ↔ MPU)
-
-| MPU | NodeMCU |
-|-----|---------|
-| VCC | **3V** |
-| GND | **G** |
-| SCL | **D1** (GPIO5) |
-| SDA | **D2** (GPIO4) |
-
-Trigger: one leg to **D5** (GPIO14), the other to **G** (internal pull-up).
-
-Full kit notes: [docs/HARDWARE.md](docs/HARDWARE.md) · flash / serial: [docs/SETUP.md](docs/SETUP.md)
+(The ESP32 firmware mirrors AIM lines on USB for debugging.)
 
 ---
 
-## Status (2026-08-13)
-
-| Piece | Status |
-|-------|--------|
-| 3D drone range (`range3d/`) | Working — webs, settings, light/dark, SFX, self-test |
-| Aim firmware + runtime bias tracking | Working |
-| Hardware trigger on `D5` | Working |
-| Magnetometer | Not on this module |
-| Networked multiplayer | Not started |
-
----
-
-## Verify
-
-```bash
-.venv/bin/python range3d/main.py --simulate --selftest
-tools/run_tests.sh
-```
-
----
-
-## What’s in the repo
+## Layout
 
 | Path | What |
 |------|------|
-| [`range3d/`](range3d/) | **The game** (Ursina) + bundled sounds |
-| [`firmware/aim-controller/`](firmware/aim-controller/) | Pitch/yaw/roll + trigger over serial |
-| [`firmware/mpu-reader/`](firmware/mpu-reader/) | Raw IMU bring-up sketch |
-| [`tools/`](tools/) | Serial parser, monitors, tests |
-| [`docs/`](docs/) | Hardware, setup, protocol, roadmap |
-
-Game design notes (lighting, projection self-test, web feedback): [range3d/README.md](range3d/README.md)
+| [`range3d/`](range3d/) | 3D drone range |
+| [`firmware/aim-controller-esp32-ble/`](firmware/aim-controller-esp32-ble/) | **ESP32 DevKit BLE aim stick** |
+| [`firmware/aim-controller/`](firmware/aim-controller/) | Original NodeMCU USB stick |
+| [`tools/aim_ble.py`](tools/aim_ble.py) | BLE reader (bleak) |
+| [`tools/aim_serial.py`](tools/aim_serial.py) | Shared AIM parser + USB reader |
 
 ---
 

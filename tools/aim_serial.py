@@ -49,6 +49,39 @@ class AimSource:
             return AimState(**asdict(self._state))
 
 
+def parse_aim_line(raw: str) -> dict | None:
+    """Parse one `AIM,...` telemetry line into AimSource field kwargs."""
+    if not raw.startswith("AIM,"):
+        return None
+    parts = raw.split(",")
+    # 6 fields is the pre-debounce firmware, 7 adds the counter.
+    if len(parts) not in (6, 7):
+        return None
+    try:
+        fields = dict(
+            device_ms=int(parts[1]),
+            pitch=float(parts[2]),
+            yaw=float(parts[3]),
+            roll=float(parts[4]),
+            trigger=int(parts[5]),
+        )
+        if len(parts) == 7:
+            fields["shots"] = int(parts[6])
+    except ValueError:
+        return None
+    return fields
+
+
+def apply_device_line(source: AimSource, raw: str) -> None:
+    """Update bias_ok from a `# ...` log line."""
+    if "UNTRUSTED" in raw:
+        source.set(bias_ok=False)
+    elif "trusted=" in raw:
+        source.set(bias_ok="trusted=1" in raw)
+    elif "recovered" in raw:
+        source.set(bias_ok=True)
+
+
 def read_serial(source: AimSource, port: str, baud: int, reset: bool) -> None:
     import serial  # imported here so --simulate works without pyserial
 
@@ -70,32 +103,11 @@ def read_serial(source: AimSource, port: str, baud: int, reset: bool) -> None:
                         continue
                     if raw.startswith("#"):
                         print(f"[device] {raw}")
-                        if "UNTRUSTED" in raw:
-                            source.set(bias_ok=False)
-                        elif "trusted=" in raw:
-                            source.set(bias_ok="trusted=1" in raw)
-                        elif "recovered" in raw:
-                            source.set(bias_ok=True)
+                        apply_device_line(source, raw)
                         continue
-                    if not raw.startswith("AIM,"):
-                        continue
-                    parts = raw.split(",")
-                    # 6 fields is the pre-debounce firmware, 7 adds the counter.
-                    if len(parts) not in (6, 7):
-                        continue
-                    try:
-                        fields = dict(
-                            device_ms=int(parts[1]),
-                            pitch=float(parts[2]),
-                            yaw=float(parts[3]),
-                            roll=float(parts[4]),
-                            trigger=int(parts[5]),
-                        )
-                        if len(parts) == 7:
-                            fields["shots"] = int(parts[6])
-                    except ValueError:
-                        continue
-                    source.set(**fields)
+                    fields = parse_aim_line(raw)
+                    if fields:
+                        source.set(**fields)
         except Exception as exc:  # keep running across unplug/replug
             source.set(connected=False, source="disconnected")
             print(f"[serial] error: {exc}; retrying in 2s")

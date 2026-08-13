@@ -1,6 +1,9 @@
 # Aim protocol
 
-The controller streams plain ASCII lines over USB serial at **115200 baud**.
+The controller streams plain ASCII lines. On `main` that is **USB serial at
+115200 baud**. On the `esp32-bluetooth` branch the same lines also go out over
+**BLE Nordic UART** from an ESP32 DevKit (advertised name `GyroGun`); USB is
+kept as a debug mirror.
 
 ## Telemetry
 

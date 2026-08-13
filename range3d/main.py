@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """A 3D shooting range you aim at with the physical gun.
 
-    game/.venv/bin/python range3d/main.py                 # live gun
     game/.venv/bin/python range3d/main.py --simulate      # no hardware
-    game/.venv/bin/python range3d/main.py --port /dev/ttyUSB1
+    game/.venv/bin/python range3d/main.py --ble           # ESP32 DevKit BLE
+    game/.venv/bin/python range3d/main.py --port /dev/ttyUSB0  # wired serial
 
 Light-gun model rather than first person: the camera stays put and the gun
-moves a reticle inside the view, which is what you are doing physically when
-you point at the monitor. Shots fire spider webs instead of bullets — strand
-to the impact, wrap on a hit, splat on a miss.
+moves a reticle inside the view. Shots fire spider webs — strand to the
+impact, wrap on a hit, splat on a miss.
 
-Serial is read directly instead of through the HTTP bridge, using the same
-parser the bridge uses, so there is one less hop and one less thing to start.
+Serial or BLE is read directly, using the shared AIM line parser.
 """
 from __future__ import annotations
 
@@ -49,6 +47,10 @@ from ursina import (  # noqa: E402
 from ursina.shaders import lit_with_shadows_shader, unlit_shader  # noqa: E402
 
 from aim_serial import AimSource, read_serial, simulate  # noqa: E402
+try:
+    from aim_ble import read_ble  # noqa: E402
+except ImportError:  # pragma: no cover - tools path always present in-repo
+    read_ble = None  # type: ignore
 
 ROUND_SECONDS = 60
 MAG_SIZE = 6
@@ -1205,6 +1207,12 @@ def main() -> int:
     parser.add_argument("--port", default="/dev/ttyUSB0")
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--simulate", action="store_true")
+    parser.add_argument("--ble", action="store_true",
+                        help="read aim over BLE from an ESP32 DevKit (GyroGun)")
+    parser.add_argument("--ble-name", default="GyroGun",
+                        help="BLE advertised name to connect to")
+    parser.add_argument("--ble-address", default=None,
+                        help="optional BLE MAC, skips name scan")
     parser.add_argument("--reset", action="store_true",
                         help="reboot the board on connect, forcing it to "
                              "recalibrate. Off by default: it would otherwise "
@@ -1221,6 +1229,14 @@ def main() -> int:
     source = AimSource()
     if args.simulate:
         worker = threading.Thread(target=simulate, args=(source,), daemon=True)
+    elif args.ble:
+        if read_ble is None:
+            raise SystemExit("aim_ble not available")
+        worker = threading.Thread(
+            target=read_ble,
+            args=(source, args.ble_name, args.ble_address),
+            daemon=True,
+        )
     else:
         worker = threading.Thread(
             target=read_serial,
