@@ -26,6 +26,23 @@ Useful pins for this project:
 | G | — | common ground |
 | VIN / VU | — | 5 V from USB (do not feed into 3.3 V‑only pins) |
 
+### ESP32 DevKit (Bluetooth branch — `esp32-bluetooth`)
+| Field | Value |
+|-------|--------|
+| Board | ESP32 DevKit (typical dual-core WROOM) |
+| Link | **BLE Nordic UART**, advertises as `GyroGun` |
+| Logic | **3.3 V** |
+| Firmware | `firmware/aim-controller-esp32-ble/` |
+
+| GPIO | Role |
+|------|------|
+| 21 | I2C SDA (MPU) |
+| 22 | I2C SCL (MPU) |
+| 27 | Trigger button to GND |
+| 26 | Coin vibrator drive (via NPN/MOSFET — not direct) |
+
+See that firmware README for the vibrator transistor circuit.
+
 ### Arduino Nano (on breadboard, not required yet)
 | Field | Value |
 |-------|--------|
