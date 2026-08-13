@@ -7,8 +7,8 @@
 
 Light-gun model rather than first person: the camera stays put and the gun
 moves a reticle inside the view, which is what you are doing physically when
-you point at the monitor. It also keeps yaw drift off the camera, where it
-would be far more disorienting than on a crosshair you can re-centre.
+you point at the monitor. Shots fire spider webs instead of bullets — strand
+to the impact, wrap on a hit, splat on a miss.
 
 Serial is read directly instead of through the HTTP bridge, using the same
 parser the bridge uses, so there is one less hop and one less thing to start.
@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 from ursina import (  # noqa: E402
+    Audio,
     Cylinder,
     DirectionalLight,
     Entity,
@@ -54,6 +55,16 @@ RELOAD_S = 0.9
 AIM_SPAN = 70.0
 SMOOTHING = 0.45
 TARGET_COUNT = 5
+# Original synthesized Spidey-style thwip / wrap (see range3d/sounds/).
+SFX_ENABLED = True
+
+
+def play_sfx(name: str, volume: float = 0.8, pitch: float = 1.0) -> None:
+    """Play a one-shot from `range3d/sounds/`. No-op if muted or missing."""
+    if not SFX_ENABLED:
+        return
+    Audio(f"sounds/{name}", autoplay=True, auto_destroy=True,
+          volume=volume, pitch=pitch)
 
 
 def view_scale() -> float:
@@ -88,6 +99,35 @@ SHELL = color.rgb32(62, 67, 78)
 SHELL_DARK = color.rgb32(33, 36, 43)
 ACCENT = color.rgb32(236, 92, 58)
 GLASS = color.rgb32(96, 158, 186)
+WEB = color.rgba32(236, 240, 248, 230)
+WEB_GLOW = color.rgba32(210, 220, 240, 160)
+
+
+def make_spider_web(scale: float = 1.0, tint=WEB) -> Entity:
+    """Flat spider web built from thin quads — spokes plus concentric rings.
+
+    Lives in the local XY plane so `look_at` aims the whole pattern at the
+    camera or along a shot without fighting child rotations.
+    """
+    root = Entity(scale=scale, shader=unlit_shader)
+    spokes = 8
+    for i in range(spokes):
+        angle = i * (360 / spokes)
+        Entity(parent=root, model="quad", rotation_z=angle,
+               scale=(0.018, 1.0), color=tint, shader=unlit_shader,
+               double_sided=True)
+    for radius in (0.22, 0.42, 0.62, 0.82):
+        segments = 16
+        for i in range(segments):
+            angle = math.radians(i * (360 / segments))
+            Entity(
+                parent=root, model="quad",
+                position=(math.cos(angle) * radius, math.sin(angle) * radius, 0),
+                rotation_z=math.degrees(angle) + 90,
+                scale=(0.014, 2 * math.pi * radius / segments * 1.15),
+                color=tint, shader=unlit_shader, double_sided=True,
+            )
+    return root
 
 
 def make_drone(position: Vec3, scale: float) -> Entity:
@@ -143,7 +183,7 @@ def make_drone(position: Vec3, scale: float) -> Entity:
 
 
 class Effects:
-    """Debris, tracers, impact marks and the muzzle flash.
+    """Spider-web shots, wraps, wall splats, and wrecked drones.
 
     Everything is a short-lived Entity on one list rather than a particle
     system, because the counts here are tiny and a list that gets swept each
@@ -157,74 +197,68 @@ class Effects:
              velocity: Vec3 = Vec3(0, 0, 0)) -> None:
         self.items.append((entity, life, life, kind, velocity))
 
-    def burst(self, position: Vec3, scale: float = 1.0) -> None:
-        flash = Entity(model="sphere", position=position, scale=0.1 * scale,
-                       color=color.rgba32(255, 214, 150, 235),
-                       shader=unlit_shader)
-        self._add(flash, 0.16, "flash")
-
-        ring = Entity(model="sphere", position=position, scale=0.2 * scale,
-                      color=color.rgba32(255, 150, 80, 150), shader=unlit_shader)
-        self._add(ring, 0.34, "flash")
-
-        for _ in range(14):
-            direction = Vec3(random.uniform(-1, 1), random.uniform(-0.4, 1),
-                             random.uniform(-1, 1)).normalized()
-            shard = Entity(
-                model="cube", position=position,
-                scale=random.uniform(0.05, 0.13) * scale,
-                color=random.choice((SHELL, SHELL_DARK, ACCENT)),
-                rotation=Vec3(random.uniform(0, 360), random.uniform(0, 360), 0),
-            )
-            self._add(shard, random.uniform(0.5, 1.0), "debris",
-                      direction * random.uniform(3.5, 8.0))
-
-    def tracer(self, start: Vec3, end: Vec3) -> None:
+    def web_shot(self, start: Vec3, end: Vec3) -> None:
+        """Strand from the hand to the impact, plus a web that blooms at the tip."""
         delta = end - start
         length = delta.length()
         if length < 0.01:
             return
-        beam = Entity(model="cube", position=start + delta * 0.5,
-                      color=color.rgba32(255, 208, 140, 170),
-                      shader=unlit_shader)
-        beam.look_at(end)
-        beam.scale = Vec3(0.016, 0.016, length)
+        strand = Entity(model="cube", position=start + delta * 0.5,
+                        color=WEB, shader=unlit_shader)
+        strand.look_at(end)
+        strand.scale = Vec3(0.012, 0.012, length)
         # Not flagged "flash": the expansion those get would blow a beam this
         # close to the eye up into a wedge across the whole screen.
-        self._add(beam, 0.05, "decal")
+        self._add(strand, 0.12, "decal")
+
+        tip = make_spider_web(scale=0.05, tint=WEB_GLOW)
+        tip.position = start + delta * 0.15
+        tip.look_at(end)
+        tip.web_grow = (end - tip.position).normalized() * min(48.0, length * 8)
+        tip.web_end = end
+        tip.web_bloom = True
+        self._add(tip, 0.22, "web_flight")
+
+    def wrap(self, position: Vec3, scale: float = 1.0) -> None:
+        """Web that snaps open over a hit enemy and holds for a beat."""
+        web = make_spider_web(scale=0.15 * scale, tint=WEB)
+        web.position = position
+        web.look_at(camera.world_position)
+        self._add(web, 0.55, "web_wrap")
+        puff = Entity(model="sphere", position=position, scale=0.12 * scale,
+                      color=WEB_GLOW, shader=unlit_shader)
+        self._add(puff, 0.2, "flash")
 
     def wreck(self, drone: Entity, push: Vec3) -> None:
         """Hand a killed drone over to be tumbled out of the sky.
 
         It keeps its model and stops being a target, so it cannot be shot
-        twice while it falls.
+        twice while it falls. A web sticks to the wreck so the wrap reads
+        through the fall.
         """
         drone.collider = None
+        stuck = make_spider_web(scale=1.35, tint=WEB)
+        stuck.parent = drone
+        stuck.position = Vec3(0, 0, 0)
+        stuck.rotation = Vec3(0, 0, 0)
         self._add(drone, 1.7, "wreck", push)
 
     def impact(self, position: Vec3, normal: Vec3) -> None:
-        # Faces back along the normal, not down it: an Ursina circle shows its
-        # -z side, so looking at the normal buries the visible face in the
-        # wall. Sized to read at the back of the room, roughly a tenth of a
-        # drone, which is small enough not to litter the chamber.
-        mark = Entity(model="circle", position=position + normal * 0.02,
-                      scale=0.45, color=color.rgba32(58, 66, 80, 190),
-                      shader=unlit_shader, double_sided=True)
-        mark.look_at(position - normal)
-        self._add(mark, 6.0, "decal")
-        ring = Entity(model="circle", position=position + normal * 0.03,
-                      scale=0.62, color=color.rgba32(120, 128, 142, 90),
-                      shader=unlit_shader, double_sided=True)
-        ring.look_at(position - normal)
-        self._add(ring, 2.5, "decal")
-        for _ in range(5):
+        # Web splat on whatever the strand missed an enemy with. Faces back
+        # along the normal: an Ursina quad shows its -z side, so looking down
+        # the normal buries the visible face in the wall.
+        splat = make_spider_web(scale=0.55, tint=WEB)
+        splat.position = position + normal * 0.03
+        splat.look_at(position - normal)
+        self._add(splat, 5.5, "decal")
+        for _ in range(4):
             direction = (normal + Vec3(random.uniform(-0.6, 0.6),
                                        random.uniform(-0.2, 0.8),
                                        random.uniform(-0.6, 0.6))).normalized()
-            spark = Entity(model="cube", position=position, scale=0.035,
-                           color=color.rgba32(255, 200, 130, 220),
-                           shader=unlit_shader)
-            self._add(spark, 0.3, "debris", direction * random.uniform(2, 4.5))
+            strand = Entity(model="cube", position=position, scale=(0.02, 0.02, 0.18),
+                            color=WEB, shader=unlit_shader)
+            strand.look_at(position + direction)
+            self._add(strand, 0.35, "debris", direction * random.uniform(1.5, 3.5))
 
     def update(self, dt: float) -> None:
         alive = []
@@ -241,6 +275,20 @@ class Effects:
                 entity.rotation_y += 300 * dt
             elif kind == "flash":
                 entity.scale *= 1 + 5.5 * dt
+            elif kind == "web_flight":
+                grow = getattr(entity, "web_grow", None)
+                if grow is not None:
+                    entity.position += grow * dt
+                    end = getattr(entity, "web_end", None)
+                    if end is not None and (entity.position - end).length() < 0.4:
+                        entity.position = end
+                        entity.web_grow = Vec3(0, 0, 0)
+                if getattr(entity, "web_bloom", False):
+                    entity.scale *= 1 + 14 * dt
+                entity.rotation_z += 480 * dt
+            elif kind == "web_wrap":
+                entity.scale *= 1 + 9 * dt
+                entity.rotation_z += 90 * dt
             elif kind == "wreck":
                 entity.position += velocity * dt
                 velocity = Vec3(velocity.x, velocity.y - 18 * dt, velocity.z)
@@ -257,8 +305,10 @@ class Effects:
 
             if kind == "decal":
                 entity.alpha = min(1.0, fade * 4)
-            elif kind != "wreck":
+            elif kind not in ("wreck", "web_wrap", "web_flight"):
                 entity.alpha = fade
+            elif kind in ("web_wrap", "web_flight"):
+                entity.alpha = min(1.0, fade * 3)
             alive.append((entity, remaining, life, kind, velocity))
         self.items = alive
 
@@ -370,13 +420,14 @@ class Range3D:
         # light would change nothing. Its job is done by the shader's flat
         # albedo term, which never goes to black on unlit faces.
 
-        # A glow low on the screen where the gun would be, not a full-screen
-        # wash: covering the whole viewport tinted every pixel warm for the
-        # length of the flash, which looked like the render had gone wrong.
+        # A soft web puff low on the screen where the strand leaves the hand,
+        # not a full-screen wash: covering the whole viewport tinted every
+        # pixel for the length of the flash, which looked like the render
+        # had gone wrong.
         self.muzzle_light = Entity(
             model="circle", parent=camera.ui, scale=(1.1, 0.5),
             position=(0.05, -0.62), shader=unlit_shader,
-            color=color.rgba32(255, 190, 90, 0), z=1,
+            color=color.rgba32(220, 230, 245, 0), z=1,
         )
         self.effects = Effects()
 
@@ -541,20 +592,21 @@ class Range3D:
 
         self.ammo -= 1
         self.shots += 1
-        self.muzzle_light.color = color.rgba32(255, 190, 90, 130)
-        invoke(setattr, self.muzzle_light, "color", color.rgba32(255, 190, 90, 0),
-               delay=0.05)
-        self.shake = 0.09
+        self.muzzle_light.color = color.rgba32(220, 230, 245, 120)
+        invoke(setattr, self.muzzle_light, "color", color.rgba32(220, 230, 245, 0),
+               delay=0.06)
+        self.shake = 0.06
+        play_sfx("web_thwip", volume=0.85, pitch=random.uniform(0.94, 1.08))
 
         direction = self.aim_ray()
         hit = raycast(camera.world_position, direction, distance=60, debug=False)
-        # The tracer leaves from below the eye rather than from the camera
+        # The strand leaves from below the eye rather than from the camera
         # itself, which would put it exactly behind the reticle and make it
-        # invisible. Slung low and right, it reads as coming from the gun.
+        # invisible. Slung low and right, it reads as coming from the hand.
         muzzle = (camera.world_position + camera.down * 0.34 + camera.right * 0.22
                   + camera.forward * 1.4)
         end = hit.world_point if hit.hit else camera.world_position + direction * 60
-        self.effects.tracer(muzzle, end)
+        self.effects.web_shot(muzzle, end)
 
         if hit.hit and hit.entity in self.targets:
             self.register_hit(hit.entity)
@@ -567,14 +619,15 @@ class Range3D:
         distance = (target.world_position - camera.world_position).length()
         points = int(40 + (1.3 - target.scale_x) * 60 + distance * 3)
         self.score += points
-        self.effects.burst(Vec3(target.world_position), target.scale_x)
+        self.effects.wrap(Vec3(target.world_position), target.scale_x)
+        play_sfx("web_wrap", volume=0.7, pitch=random.uniform(0.95, 1.06))
         self.popup(target.world_position, points)
         self.hitmark.enabled = True
         self.hitmark_scale = 1.5
         self.hitmark.scale = 1.5
-        self.shake = 0.16
+        self.shake = 0.12
         self.targets.remove(target)
-        # Only a light shove downrange: enough to sell the impact, not enough
+        # Only a light shove downrange: enough to sell the wrap, not enough
         # to carry the wreck through the back wall before it hits the floor.
         push = Vec3(target.drift.x, 1.6, 1.2) + Vec3(
             random.uniform(-1.5, 1.5), random.uniform(0, 1.2),
@@ -768,6 +821,8 @@ def check_projection_against_render(report) -> None:
 
 def run_selftest(game: "Range3D") -> None:
     """Check that a shot lands where the reticle is drawn."""
+    global SFX_ENABLED
+    SFX_ENABLED = False
     failures = 0
 
     def check(name: str, got, want) -> None:

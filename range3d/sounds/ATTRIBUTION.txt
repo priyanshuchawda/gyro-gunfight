@@ -1,0 +1,3 @@
+web_thwip.wav / web_wrap.wav
+  Original synthesized Spidey-style web-shooter SFX for this project
+  (not ripped from Marvel media). Generated procedurally in-repo.
