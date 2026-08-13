@@ -33,3 +33,6 @@ Thumbs.db
 *.elf
 *.map
 /tmp/
+
+# Local player prefs
+range3d/settings.json

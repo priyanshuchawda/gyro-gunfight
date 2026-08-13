@@ -16,6 +16,7 @@ parser the bridge uses, so there is one less hop and one less thing to start.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import random
 import sys
@@ -26,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 from ursina import (  # noqa: E402
     Audio,
+    Button,
     Cylinder,
     DirectionalLight,
     Entity,
@@ -51,11 +53,15 @@ from aim_serial import AimSource, read_serial, simulate  # noqa: E402
 ROUND_SECONDS = 60
 MAG_SIZE = 6
 RELOAD_S = 0.9
-# Degrees of gun movement to cross the screen, matching the 2D range's feel.
+# Degrees of gun movement to cross the screen at sensitivity 1.0.
 AIM_SPAN = 70.0
 SMOOTHING = 0.45
 TARGET_COUNT = 5
 SFX_ENABLED = True
+SENSITIVITY_MIN = 0.5
+SENSITIVITY_MAX = 2.0
+SENSITIVITY_STEP = 0.25
+SETTINGS_PATH = Path(__file__).resolve().parent / "settings.json"
 # Primary web-shot clip (repo-relative so the absolute home path is not baked in).
 WEB_SHOOT_SFX = Path(__file__).resolve().parent.parent / "web" / "sounds" / "shoot.mp3"
 
@@ -102,8 +108,64 @@ SHELL = color.rgb32(62, 67, 78)
 SHELL_DARK = color.rgb32(33, 36, 43)
 ACCENT = color.rgb32(236, 92, 58)
 GLASS = color.rgb32(96, 158, 186)
-WEB = color.rgba32(236, 240, 248, 230)
-WEB_GLOW = color.rgba32(210, 220, 240, 160)
+
+# Light = white test chamber (original). Dark = cool night bay: charcoal
+# surfaces, cyan grid for depth, brighter webs so strands still read.
+THEMES = {
+    "light": {
+        "window": color.rgb32(214, 219, 226),
+        "floor": color.rgb32(216, 219, 225),
+        "wall": color.rgb32(238, 240, 244),
+        "side": color.rgb32(236, 239, 243),
+        "tile": color.rgba32(120, 130, 145, 70),
+        "stripe": color.rgb32(226, 138, 62),
+        "block": color.rgb32(248, 249, 251),
+        "sun": color.rgb32(203, 203, 203),
+        "shadow": color.rgba(0, 0, 0, 0.38),
+        "ink": color.rgb32(38, 44, 54),
+        "faint": color.rgb32(88, 96, 110),
+        "warn": color.rgb32(214, 96, 40),
+        "web": color.rgba32(236, 240, 248, 230),
+        "web_glow": color.rgba32(210, 220, 240, 160),
+        "muzzle": color.rgba32(220, 230, 245, 120),
+        "btn": color.rgb32(48, 54, 64),
+        "btn_text": color.rgb32(236, 240, 246),
+        "panel": color.rgba32(248, 250, 252, 235),
+        "panel_line": color.rgba32(120, 130, 145, 90),
+        "label": "DARK",
+    },
+    "dark": {
+        "window": color.rgb32(14, 17, 22),
+        "floor": color.rgb32(22, 26, 34),
+        "wall": color.rgb32(32, 38, 48),
+        "side": color.rgb32(26, 31, 40),
+        "tile": color.rgba32(90, 150, 190, 95),
+        "stripe": color.rgb32(236, 148, 72),
+        "block": color.rgb32(44, 52, 64),
+        "sun": color.rgb32(118, 132, 158),
+        "shadow": color.rgba(0, 0, 0, 0.58),
+        "ink": color.rgb32(224, 232, 242),
+        "faint": color.rgb32(140, 154, 172),
+        "warn": color.rgb32(255, 150, 72),
+        "web": color.rgba32(170, 220, 255, 235),
+        "web_glow": color.rgba32(120, 200, 255, 190),
+        "muzzle": color.rgba32(150, 210, 255, 110),
+        "btn": color.rgb32(210, 220, 232),
+        "btn_text": color.rgb32(28, 34, 44),
+        "panel": color.rgba32(28, 34, 44, 240),
+        "panel_line": color.rgba32(90, 150, 190, 100),
+        "label": "LIGHT",
+    },
+}
+
+WEB = THEMES["light"]["web"]
+WEB_GLOW = THEMES["light"]["web_glow"]
+
+
+def set_web_palette(theme: dict) -> None:
+    global WEB, WEB_GLOW
+    WEB = theme["web"]
+    WEB_GLOW = theme["web_glow"]
 
 
 def make_spider_web(scale: float = 1.0, tint=WEB) -> Entity:
@@ -338,13 +400,18 @@ class Range3D:
         self.popups: list[list] = []
         self.rate_packets = 0
         self.rate = 0
+        self.theme_name = "light"
+        self.sensitivity = 1.0
+        self.settings_open = False
+        self._load_settings()
 
         self._build_world()
         self._build_hud()
+        self.apply_theme(self.theme_name)
+        self._refresh_settings_labels()
 
     # -- scene ------------------------------------------------------------
     def _build_world(self) -> None:
-        window.color = color.rgb32(214, 219, 226)
         # Eye height sits mid-way up the target band so the reticle rests at
         # the centre of the action instead of below it.
         camera.position = Vec3(0, 3.4, -9)
@@ -357,49 +424,45 @@ class Range3D:
         # made the drones read as stickers; a single sun is what gives the
         # boxes and rotor arms enough shading to look like objects in a room.
         Entity.default_shader = lit_with_shadows_shader
-        # The stock shadow colour is `rgba(0, .5, 1, .25)`, and the shader
-        # subtracts it from shadowed pixels, so out of the box every shadow in
-        # the room comes out cyan. Neutral grey is what a shadow should be.
-        lit_with_shadows_shader.default_input["shadow_color"] = color.rgba(0, 0, 0, 0.38)
 
-        wall = color.rgb32(238, 240, 244)
-        tile = color.rgba32(120, 130, 145, 70)
-
-        room = [
-            Entity(model="plane", scale=(44, 1, 44), position=(0, 0, 6),
-                   color=color.rgb32(216, 219, 225)),
-            # Back wall the drones fly against. The tile grid is what makes
-            # the room read as a test chamber and gives a scale reference.
-            Entity(model="cube", scale=(34, 16, 0.4), position=(0, 8, 14),
-                   color=wall, collider="box"),
-        ]
-        Entity(model=Grid(17, 8), scale=(34, 16), position=(0, 8, 13.75),
-               color=tile, shader=unlit_shader)
+        self.floor = Entity(model="plane", scale=(44, 1, 44), position=(0, 0, 6))
+        # Back wall the drones fly against. The tile grid is what makes
+        # the room read as a test chamber and gives a scale reference.
+        self.back_wall = Entity(model="cube", scale=(34, 16, 0.4),
+                                position=(0, 8, 14), collider="box")
+        self.wall_grid = Entity(model=Grid(17, 8), scale=(34, 16),
+                                position=(0, 8, 13.75), shader=unlit_shader)
+        self.side_walls = []
         for x in (-17, 17):
-            room.append(Entity(model="cube", scale=(0.4, 16, 30),
-                               position=(x, 8, 2), collider="box",
-                               color=color.rgb32(236, 239, 243)))
+            self.side_walls.append(
+                Entity(model="cube", scale=(0.4, 16, 30),
+                       position=(x, 8, 2), collider="box"))
         # The room receives shadows but must not cast them. A 16 m side wall
         # lit from the left throws a slab across the whole back wall, which
         # looks like a rendering fault rather than a shadow. 0b0001 is the
         # mask the shadow camera renders.
+        room = [self.floor, self.back_wall, *self.side_walls]
         for surface in room:
             surface.hide(0b0001)
 
         # A grid on the floor rather than the stripes that were here before.
         # Stripes only mark the few depths they sit at; a grid converges, so
         # the eye reads distance anywhere in the room.
-        Entity(model=Grid(22, 22), scale=(44, 44), rotation_x=90,
-               position=(0, 0.01, 6), color=tile, shader=unlit_shader)
-        Entity(model="cube", scale=(34, 0.02, 0.14), position=(0, 0.03, 7.5),
-               color=color.rgb32(226, 138, 62)).hide(0b0001)
+        self.floor_grid = Entity(model=Grid(22, 22), scale=(44, 44),
+                                 rotation_x=90, position=(0, 0.01, 6),
+                                 shader=unlit_shader)
+        self.stripe = Entity(model="cube", scale=(34, 0.02, 0.14),
+                             position=(0, 0.03, 7.5))
+        self.stripe.hide(0b0001)
 
         # Blocks on the floor, both as scenery and as something for stray
         # shots to stop against instead of vanishing into the distance.
+        self.blocks = []
         for x, z, h in ((-7.5, 8.5, 2.2), (7.5, 8.5, 2.2), (-2.4, 12.0, 1.5),
                         (3.6, 12.0, 1.8)):
-            Entity(model="cube", scale=(1.5, h, 1.5), position=(x, h / 2, z),
-                   color=color.rgb32(248, 249, 251), collider="box")
+            self.blocks.append(
+                Entity(model="cube", scale=(1.5, h, 1.5), position=(x, h / 2, z),
+                       collider="box"))
 
         # Sun from over the left shoulder, so drones throw a shadow onto the
         # floor and the back wall. That shadow is the main depth cue for how
@@ -410,7 +473,6 @@ class Range3D:
         # the constructor is dropped and the light stays full white. Full
         # white clips this room, because the shader adds a flat albedo term
         # and a diffuse term that together pass 1.0 on anything near-white.
-        self.sun.color = color.rgb32(203, 203, 203)
         self.sun.position = Vec3(-8, 18, -4)
         self.sun.look_at(Vec3(2, 0, 9))
         # Fit the shadow map to the play volume instead of the whole scene:
@@ -475,10 +537,8 @@ class Range3D:
                    scale=(0.004, 0.022), shader=unlit_shader,
                    color=color.rgb32(255, 245, 235))
 
-        # Dark on light: the room is white, so the readable HUD from the old
-        # dark scene would have been invisible here.
-        ink = color.rgb32(38, 44, 54)
-        faint = color.rgb32(88, 96, 110)
+        ink = THEMES["light"]["ink"]
+        faint = THEMES["light"]["faint"]
         self.hud_score = Text(parent=camera.ui, text="", origin=(-0.5, 0.5),
                               position=(-0.86, 0.46), scale=1.1, color=ink)
         self.hud_timer = Text(parent=camera.ui, text="", origin=(0, 0.5),
@@ -491,12 +551,184 @@ class Range3D:
         # be wrong, which looks exactly like a gun that drifts for no reason.
         self.hud_warn = Text(parent=camera.ui, text="", origin=(0, -0.5),
                              position=(0, -0.36), scale=0.95,
-                             color=color.rgb32(214, 96, 40))
+                             color=THEMES["light"]["warn"])
         self.banner = Text(parent=camera.ui, text="", origin=(0, 0), scale=2.2,
                            color=ink)
         self.banner_sub = Text(parent=camera.ui, text="", origin=(0, 0),
                                position=(0, -0.07), scale=1.0, color=faint)
+        self._build_settings()
         self._show_banner("RANGE READY", "pull the trigger to start")
+
+    def _make_settings_btn(self, parent, text, pos, scale, on_click) -> Button:
+        btn = Button(
+            parent=parent, text=text, position=pos, scale=scale,
+            color=THEMES["light"]["btn"], text_color=THEMES["light"]["btn_text"],
+            highlight_color=ACCENT, pressed_color=color.rgb32(200, 80, 50),
+            on_click=on_click,
+        )
+        btn.text_entity.scale = 0.55
+        return btn
+
+    def _build_settings(self) -> None:
+        """Settings gear: theme + aim sensitivity, opened from the corner."""
+        self.settings_btn = self._make_settings_btn(
+            camera.ui, "SETTINGS", (0.78, -0.44), (0.18, 0.055),
+            self.toggle_settings,
+        )
+
+        self.settings_panel = Entity(parent=camera.ui, enabled=False, z=-0.1)
+        self.settings_dim = Entity(
+            parent=self.settings_panel, model="quad", scale=(3.2, 2.0),
+            color=color.rgba32(8, 10, 14, 140), z=0.02, collider="box",
+        )
+        self.settings_bg = Entity(
+            parent=self.settings_panel, model="quad", scale=(0.72, 0.58),
+            color=THEMES["light"]["panel"], z=0.01,
+        )
+        self.settings_title = Text(
+            parent=self.settings_panel, text="SETTINGS", origin=(0, 0),
+            position=(0, 0.20), scale=1.3, color=THEMES["light"]["ink"],
+        )
+        self.settings_theme_label = Text(
+            parent=self.settings_panel, text="Theme", origin=(-0.5, 0),
+            position=(-0.28, 0.08), scale=0.9, color=THEMES["light"]["faint"],
+        )
+        self.theme_toggle_btn = self._make_settings_btn(
+            self.settings_panel, "LIGHT", (0.16, 0.08), (0.22, 0.055),
+            self.toggle_theme,
+        )
+        self.settings_sens_label = Text(
+            parent=self.settings_panel, text="Sensitivity", origin=(-0.5, 0),
+            position=(-0.28, -0.02), scale=0.9, color=THEMES["light"]["faint"],
+        )
+        self.sens_value = Text(
+            parent=self.settings_panel, text="1.00x", origin=(0, 0),
+            position=(0.16, -0.02), scale=1.0, color=THEMES["light"]["ink"],
+        )
+        self.sens_down_btn = self._make_settings_btn(
+            self.settings_panel, "-", (0.0, -0.12), (0.08, 0.055),
+            lambda: self.nudge_sensitivity(-SENSITIVITY_STEP),
+        )
+        self.sens_up_btn = self._make_settings_btn(
+            self.settings_panel, "+", (0.32, -0.12), (0.08, 0.055),
+            lambda: self.nudge_sensitivity(SENSITIVITY_STEP),
+        )
+        self.settings_hint = Text(
+            parent=self.settings_panel,
+            text="Higher = faster reticle   [s] toggle  [esc] close",
+            origin=(0, 0), position=(0, -0.22), scale=0.65,
+            color=THEMES["light"]["faint"],
+        )
+        self.settings_close_btn = self._make_settings_btn(
+            self.settings_panel, "CLOSE", (0, -0.32), (0.2, 0.055),
+            self.close_settings,
+        )
+        self._settings_chrome = (
+            self.settings_btn, self.theme_toggle_btn, self.sens_down_btn,
+            self.sens_up_btn, self.settings_close_btn,
+        )
+        self._settings_labels = (
+            self.settings_title, self.settings_theme_label,
+            self.settings_sens_label, self.sens_value, self.settings_hint,
+        )
+
+    def toggle_settings(self) -> None:
+        if self.settings_open:
+            self.close_settings()
+        else:
+            self.open_settings()
+
+    def open_settings(self) -> None:
+        self.settings_open = True
+        self.settings_panel.enabled = True
+        self._refresh_settings_labels()
+
+    def close_settings(self) -> None:
+        self.settings_open = False
+        self.settings_panel.enabled = False
+        self._save_settings()
+
+    def nudge_sensitivity(self, delta: float) -> None:
+        self.sensitivity = round(
+            max(SENSITIVITY_MIN, min(SENSITIVITY_MAX, self.sensitivity + delta)),
+            2,
+        )
+        self._refresh_settings_labels()
+        self._save_settings()
+
+    def _refresh_settings_labels(self) -> None:
+        mode = "DARK" if self.theme_name == "dark" else "LIGHT"
+        self.theme_toggle_btn.text = mode
+        self.sens_value.text = f"{self.sensitivity:.2f}x"
+
+    def _load_settings(self) -> None:
+        try:
+            data = json.loads(SETTINGS_PATH.read_text())
+        except (OSError, json.JSONDecodeError, TypeError):
+            return
+        theme = data.get("theme")
+        if theme in THEMES:
+            self.theme_name = theme
+        try:
+            sens = float(data.get("sensitivity", self.sensitivity))
+        except (TypeError, ValueError):
+            return
+        self.sensitivity = max(SENSITIVITY_MIN, min(SENSITIVITY_MAX, sens))
+
+    def _save_settings(self) -> None:
+        payload = {
+            "theme": self.theme_name,
+            "sensitivity": self.sensitivity,
+        }
+        try:
+            SETTINGS_PATH.write_text(json.dumps(payload, indent=2) + "\n")
+        except OSError:
+            pass
+
+    def toggle_theme(self) -> None:
+        self.apply_theme("dark" if self.theme_name == "light" else "light")
+        self._refresh_settings_labels()
+        self._save_settings()
+
+    def apply_theme(self, name: str) -> None:
+        theme = THEMES[name]
+        self.theme_name = name
+        set_web_palette(theme)
+
+        window.color = theme["window"]
+        self.floor.color = theme["floor"]
+        self.back_wall.color = theme["wall"]
+        for wall in self.side_walls:
+            wall.color = theme["side"]
+        self.wall_grid.color = theme["tile"]
+        self.floor_grid.color = theme["tile"]
+        self.stripe.color = theme["stripe"]
+        for block in self.blocks:
+            block.color = theme["block"]
+
+        self.sun.color = theme["sun"]
+        lit_with_shadows_shader.default_input["shadow_color"] = theme["shadow"]
+
+        self.hud_score.color = theme["ink"]
+        self.hud_timer.color = theme["ink"]
+        self.hud_ammo.color = theme["ink"]
+        self.hud_link.color = theme["faint"]
+        self.hud_warn.color = theme["warn"]
+        self.banner.color = theme["ink"]
+        self.banner_sub.color = theme["faint"]
+
+        self.settings_bg.color = theme["panel"]
+        for label in self._settings_labels:
+            if label is self.settings_theme_label or label is self.settings_sens_label \
+                    or label is self.settings_hint:
+                label.color = theme["faint"]
+            else:
+                label.color = theme["ink"]
+        for btn in self._settings_chrome:
+            btn.color = theme["btn"]
+            btn.text_color = theme["btn_text"]
+        # Keep the idle muzzle colour in sync; flash still clears to alpha 0.
+        self._muzzle_flash = theme["muzzle"]
 
     def _show_banner(self, title: str, sub: str) -> None:
         self.banner.text = title
@@ -559,8 +791,10 @@ class Range3D:
         aspect = window.aspect_ratio
         # UI space spans 1.0 vertically and `aspect` horizontally, so the
         # horizontal span is scaled to keep degrees-per-unit equal on both axes.
-        target_x = -dx / AIM_SPAN * aspect
-        target_y = -dy / AIM_SPAN * aspect
+        # Higher sensitivity shrinks the degrees needed to cross the screen.
+        span = AIM_SPAN / max(0.01, self.sensitivity)
+        target_x = -dx / span * aspect
+        target_y = -dy / span * aspect
         limit_x, limit_y = aspect / 2, 0.5
         target_x = max(-limit_x, min(limit_x, target_x))
         target_y = max(-limit_y, min(limit_y, target_y))
@@ -587,6 +821,8 @@ class Range3D:
 
     # -- shooting ---------------------------------------------------------
     def fire(self) -> None:
+        if self.settings_open:
+            return
         if self.state != "playing":
             self.start_round()
             return
@@ -595,9 +831,10 @@ class Range3D:
 
         self.ammo -= 1
         self.shots += 1
-        self.muzzle_light.color = color.rgba32(220, 230, 245, 120)
-        invoke(setattr, self.muzzle_light, "color", color.rgba32(220, 230, 245, 0),
-               delay=0.06)
+        flash = getattr(self, "_muzzle_flash", color.rgba32(220, 230, 245, 120))
+        self.muzzle_light.color = flash
+        clear = color.rgba(flash.r, flash.g, flash.b, 0)
+        invoke(setattr, self.muzzle_light, "color", clear, delay=0.06)
         self.shake = 0.06
         play_sfx(WEB_SHOOT_SFX, volume=0.85, pitch=random.uniform(0.94, 1.08))
 
@@ -735,7 +972,10 @@ class Range3D:
                               "gyro bias not trusted - rest the gun on the "
                               "desk for a second")
         link = state.source if state.connected else "no controller"
-        self.hud_link.text = f"{link}   {self.rate} Hz   [space] fire  [c] centre  [esc] quit"
+        self.hud_link.text = (
+            f"{link}   {self.rate} Hz   [space] fire  [c] centre  "
+            f"[s] settings  [esc] quit"
+        )
 
 
 def check_projection_against_render(report) -> None:
@@ -1004,11 +1244,22 @@ def main() -> int:
 
     def input(key):
         if key == "escape":
-            application.quit()
+            if game.settings_open:
+                game.close_settings()
+            else:
+                application.quit()
+        elif key == "s":
+            game.toggle_settings()
         elif key == "space":
             game.fire()
         elif key == "c":
             game.recentre()
+        elif key == "d" and game.settings_open:
+            game.toggle_theme()
+        elif key in ("+", "=") and game.settings_open:
+            game.nudge_sensitivity(SENSITIVITY_STEP)
+        elif key == "-" and game.settings_open:
+            game.nudge_sensitivity(-SENSITIVITY_STEP)
 
     app.update = update
     app.input = input
